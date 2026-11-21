@@ -6,7 +6,9 @@ import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.ActivityManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
@@ -39,7 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
-    private static final int MAX_CLOSE_STEPS = 6;
+    private static final int MAX_CLOSE_STEPS = 5;
 
     private static AdWatchService sInstance;
     private static String sLastDump = "尚未采集";
@@ -276,11 +278,8 @@ public class AdWatchService extends AccessibilityService {
         mStateEnteredAt = System.currentTimeMillis();
         mCloseSteps += 1;
         if (mCloseSteps > MAX_CLOSE_STEPS) {
-            log("关闭多次失败，按返回键");
-            performGlobalAction(GLOBAL_ACTION_BACK);
-            mPauseUntil = System.currentTimeMillis() + 3000L;
-            enterState(IDLE);
-            scheduleNext(Config.POLL_INTERVAL_MS);
+            log("广告页关不掉，改用重启汽水音乐");
+            forceResetTarget();
             return;
         }
         AccessibilityNodeInfo close = findClickable(root, Config.CLOSE_KEYWORDS);
@@ -289,21 +288,63 @@ public class AdWatchService extends AccessibilityService {
         }
         if (close != null && clickNode(close)) {
             log("点击关闭节点 " + brief(close));
-        } else if (mCloseSteps <= 5) {
+        } else if (mCloseSteps <= 4) {
             if (mCloseSteps <= 2) {
-                if (tapRatio(CLOSE_X, CLOSE_Y)) {
-                    log("点右上角关闭 第" + mCloseSteps + "次");
-                }
+                boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+                log("点右上角关闭 第" + mCloseSteps + "次 手势=" + ok);
             } else {
-                if (tapRatio(CLAIM_X, CLAIM_Y)) {
-                    log("点中间大按钮（继续观看/领取奖励）第" + mCloseSteps + "次");
-                }
+                boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+                log("点中间大按钮（继续观看/领取奖励）第" + mCloseSteps + "次 手势=" + ok);
             }
         } else {
             log("最后再按一次返回键");
             performGlobalAction(GLOBAL_ACTION_BACK);
         }
         scheduleNext(CLOSE_RETRY_MS);
+    }
+
+    private void forceResetTarget() {
+        performGlobalAction(GLOBAL_ACTION_HOME);
+        mAdSeen = false;
+        mCloseSteps = 0;
+        mPauseUntil = System.currentTimeMillis() + 8000L;
+        enterState(IDLE);
+        mHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                    if (am != null) {
+                        am.killBackgroundProcesses(Config.TARGET_PACKAGE);
+                        log("已结束汽水音乐后台进程");
+                    }
+                } catch (Throwable t) {
+                    log("结束进程失败 " + t);
+                }
+                mHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        launchTarget();
+                    }
+                }, 1200L);
+            }
+        }, 1500L);
+        scheduleNext(Config.POLL_INTERVAL_MS);
+    }
+
+    private void launchTarget() {
+        try {
+            Intent it = getPackageManager().getLaunchIntentForPackage(Config.TARGET_PACKAGE);
+            if (it == null) {
+                log("重启失败：找不到汽水音乐");
+                return;
+            }
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            startActivity(it);
+            log("已重新打开汽水音乐");
+        } catch (Throwable t) {
+            log("重启失败 " + t);
+        }
     }
 
     private void finishClaim() {
@@ -482,7 +523,7 @@ public class AdWatchService extends AccessibilityService {
         Path path = new Path();
         path.moveTo(x, y);
         GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0L, 60L);
+                new GestureDescription.StrokeDescription(path, 0L, 150L);
         GestureDescription description = new GestureDescription.Builder()
                 .addStroke(stroke)
                 .build();
