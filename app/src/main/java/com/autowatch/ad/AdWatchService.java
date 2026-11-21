@@ -262,11 +262,17 @@ public class AdWatchService extends AccessibilityService {
             float cy = (r.top + r.bottom) * 0.5f / h;
             int w = r.right - r.left;
             if (cy < 0.50f || cy > 0.64f) {
-                log("这个按钮位置不对（中心 y=" + ((int) (cy * 100)) + "%），改用坐标点");
+                if (System.currentTimeMillis() - mEntryLogAt >= 8000L) {
+                    mEntryLogAt = System.currentTimeMillis();
+                    log("这个按钮位置不对（中心 y=" + ((int) (cy * 100)) + "%），改用截图认字");
+                }
                 return false;
             }
             if (w > 460) {
-                log("这个按钮太宽（" + w + "px），改用坐标点");
+                if (System.currentTimeMillis() - mEntryLogAt >= 8000L) {
+                    mEntryLogAt = System.currentTimeMillis();
+                    log("这个按钮太宽（" + w + "px），改用截图认字");
+                }
                 return false;
             }
             return true;
@@ -344,7 +350,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v29）");
+        log("广告页已出现，开始认字（v30）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -446,6 +452,9 @@ private boolean mOcrFailed = false;
 private long mOcrLogAt = 0L;
 private long mLastCountdownAt = 0L;
 private int mShotMode = 0;
+private long mEntryLogAt = 0L;
+private int mIdleOcrMiss = 0;
+private int mEntryAlt = 0;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -527,7 +536,7 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
             continue;
         }
         s = s.replace(" ", "").replace("\n", "");
-        if (!s.contains("免费听") || s.contains("提前")) {
+        if (!s.contains("免费听") || s.contains("提前") || s.contains("再看") || s.contains("金币")) {
             continue;
         }
         android.graphics.Rect r = block.getBoundingBox();
@@ -536,19 +545,34 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
         }
         float cy = (r.top + r.bottom) * 0.5f / h;
         float cx = (r.left + r.right) * 0.5f / w;
-        if (cy < 0.18f || cy > 0.70f) {
+        if (cy < 0.15f || cy > 0.86f) {
             continue;
         }
-        if (cx < 0.55f) {
+        if (cx < 0.50f) {
             continue;
         }
         boolean ok = tapRatio(cx, cy);
-        log("截到「" + brief(s) + "」按钮，点它 手势=" + ok);
+        log("截到「" + brief(s) + "」按钮，点它（" + ((int) (cx * 100)) + "%,"
+                + ((int) (cy * 100)) + "%）手势=" + ok);
+        mIdleOcrMiss = 0;
         if (ok) {
             mIdleRounds = 0;
             enterState(WAIT_ENTRY);
         }
         return;
+    }
+    mIdleOcrMiss += 1;
+    int miss = mIdleOcrMiss;
+    if (miss == 2 || miss == 5 || miss == 8) {
+        float x = (mEntryAlt % 2 == 0) ? ENTRY_X : 0.767f;
+        float y = (mEntryAlt % 2 == 0) ? ENTRY_Y : 0.807f;
+        mEntryAlt += 1;
+        boolean ok = tapRatio(x, y);
+        log("没认出按钮，按备用坐标点（" + ((int) (x * 100)) + "%,"
+                + ((int) (y * 100)) + "%）手势=" + ok);
+        if (ok) {
+            enterState(WAIT_ENTRY);
+        }
     }
 }
 
