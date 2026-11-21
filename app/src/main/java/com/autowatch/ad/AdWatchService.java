@@ -13,7 +13,6 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
-/** 前台广告领取状态机：事件触发 + Handler 递归轮询兜底，无无限循环。 */
 public class AdWatchService extends AccessibilityService {
 
     static final int IDLE = 0;
@@ -23,6 +22,9 @@ public class AdWatchService extends AccessibilityService {
     static final int CLOSE = 4;
 
     private static final String CHANNEL_ID = "autowatch_ad_status";
+    private static final String[] EXIT_HINTS = {"领取成功", "跳过广告", "跳过", "关闭广告", "稍后再说"};
+    private static final int MAX_CLOSE_ATTEMPTS = 3;
+    private static final long CLOSE_RETRY_MS = 1200L;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mPollRunnable = new Runnable() {
@@ -39,6 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private long mStateEnteredAt = 0L;
     private long mRunStartedAt = 0L;
     private boolean mStopping = false;
+    private int mCloseAttempts = 0;
 
     @Override
     protected void onServiceConnected() {
@@ -87,6 +90,9 @@ public class AdWatchService extends AccessibilityService {
         if (state == CLAIM) {
             mClaimStep = 1;
         }
+        if (state == CLOSE) {
+            mCloseAttempts = 0;
+        }
     }
 
     private void scheduleNext(long delayMs) {
@@ -94,7 +100,6 @@ public class AdWatchService extends AccessibilityService {
         mHandler.postDelayed(mPollRunnable, delayMs);
     }
 
-    /** 递归轮询兜底：每次只调度下一次，绝不无限循环。 */
     private void pollOnce() {
         if (mStopping || mPrefs == null) {
             return;
@@ -182,7 +187,6 @@ public class AdWatchService extends AccessibilityService {
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
 
-    /** 两步领取：先点“领取成功”，再点“领取奖励/立即领取/确认领取”。 */
     private void runClaim(AccessibilityNodeInfo root) {
         if (mClaimStep == 1) {
             AccessibilityNodeInfo success = findClickable(root, Config.CLAIM_SUCCESS_KEYWORDS);
@@ -207,12 +211,22 @@ public class AdWatchService extends AccessibilityService {
 
     private void runClose(AccessibilityNodeInfo root) {
         AccessibilityNodeInfo close = findClickable(root, Config.CLOSE_KEYWORDS);
-        if (close != null) {
-            clickNode(close);
+        if (close == null) {
+            close = findClickable(root, EXIT_HINTS);
         }
-        finishClaim();
-        enterState(IDLE);
-        scheduleNext(Config.POLL_INTERVAL_MS);
+        if (close != null && clickNode(close)) {
+            mCloseAttempts += 1;
+        } else {
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            mCloseAttempts += 1;
+        }
+        if (mCloseAttempts >= MAX_CLOSE_ATTEMPTS || elapsedInState() >= CLOSE_RETRY_MS * MAX_CLOSE_ATTEMPTS) {
+            finishClaim();
+            enterState(IDLE);
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
+        scheduleNext(CLOSE_RETRY_MS);
     }
 
     private void finishClaim() {
@@ -265,7 +279,6 @@ public class AdWatchService extends AccessibilityService {
     private boolean isMatching(AccessibilityNodeInfo node, String[] keywords) {
         String text = textOf(node.getText());
         String desc = textOf(node.getContentDescription());
-        String className = textOf(node.getClassName());
         for (String keyword : keywords) {
             if (keyword != null && !keyword.isEmpty() && (text.contains(keyword) || desc.contains(keyword))) {
                 return true;
