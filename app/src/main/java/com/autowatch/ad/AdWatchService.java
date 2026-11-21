@@ -395,7 +395,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v35：按文字位置点按钮）");
+        log("广告页已出现，开始认字（v36：奖励弹窗点领取奖励）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -503,6 +503,7 @@ private int mEntryAlt = 0;
 private long mOcrStartAt = 0L;
 private long mAdEndAt = 0L;
 private int mBonusRefused = 0;
+private int mRewardDialogs = 0;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -650,6 +651,13 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     boolean countdown = sec >= 0 && claimWord;
     boolean finished = s.contains("领取成功");
     boolean claim = !countdown && (finished || claimWord);
+    boolean rewardDialog = (s.contains("领取奖励") || s.contains("立即领取"))
+            && (s.contains("提前得") || s.contains("坚持退出"));
+    if (rewardDialog) {
+        countdown = false;
+        claim = false;
+    }
+    bonusOffer = bonusOffer && !rewardDialog;
     int marks = 0;
     if (s.contains("版本号")) {
         marks += 1;
@@ -669,6 +677,22 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     boolean landing = marks >= 2 && !countdown;
     boolean quiet = now - mOcrLogAt < 6000L;
     long sinceCountdown = now - mLastCountdownAt;
+
+    if (rewardDialog) {
+        mGreenTaps = 0;
+        mAdEndAt = 0L;
+        boolean ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
+                new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
+                0.30f, 0.95f, "看到「第N日免费听」奖励弹窗，点绿色「领取奖励」");
+        if (ok) {
+            mCloseSteps = 0;
+            mRewardDialogs += 1;
+            log("奖励弹窗点了「领取奖励」，这是第 " + mRewardDialogs + " 次");
+            return;
+        }
+        log("奖励弹窗里没认出绿色「领取奖励」，先不动");
+        return;
+    }
 
     if (bonusOffer) {
         mGreenTaps = 0;
@@ -730,25 +754,15 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
 
     if (claim && timeOk) {
         mGreenTaps = 0;
-        if (mCloseSteps < 3) {
-            mCloseSteps += 1;
-            int step = mCloseSteps;
-            boolean ok = tapLineOn(result, new String[]{"领取奖励", "领取成功", "立即领取", "领取"},
-                    new String[]{"秒", "金币", "待领取", "提现", "我的", "说明"},
-                    0.25f, 0.99f, "广告播完了，按「领取」文字位置点 第" + step + "次");
-            if (!ok) {
-                ok = tapLineOn(result, new String[]{"领取奖励", "领取成功", "立即领取", "领取"},
-                        new String[]{"秒", "金币", "待领取", "提现", "我的", "说明"},
-                        0.03f, 0.99f, "领取按钮在上方，按文字位置点 第" + step + "次");
-            }
-            if (!ok) {
-                mCloseSteps = step - 1;
-                log("没认出领取按钮的位置，这一轮先不点，免得把广告点停 第" + step + "次");
-            }
+        boolean ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
+                new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
+                0.25f, 0.95f, "广告播完，点「领取奖励」按钮");
+        if (ok) {
+            mCloseSteps = 0;
             return;
         }
-        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("领取点了几次，点「领取成功」旁的叉 手势=" + ok);
+        log("只有页头的「领取成功」，没有领取按钮，直接关广告页");
+        closeLadder();
         return;
     }
 
