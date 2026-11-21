@@ -290,21 +290,38 @@ public class AdWatchService extends AccessibilityService {
         if (elapsedInState() < AD_MIN_WATCH_MS) {
             if (mCloseSteps == 0) {
                 mCloseSteps = 1;
-                log("广告页已出现，静等播放完（不点屏幕）");
+                log("广告页已出现，静等播放完再关（不点屏幕）");
             }
             scheduleNext(800L);
             return;
         }
-        log("广告看完 30 秒，直接把汽水音乐拉回歌曲页");
-        launchTargetClear();
-        if (mAdSeen) {
-            finishClaim();
+        mCloseSteps += 1;
+        if (mCloseSteps == 2) {
+            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+            log("广告播完，点右上角关闭 手势=" + ok);
+        } else if (mCloseSteps == 3) {
+            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+            log("再点一次右上角关闭 手势=" + ok);
+        } else if (mCloseSteps == 4) {
+            boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
+            log("长按右上角关闭 手势=" + ok);
+        } else if (mCloseSteps == 5) {
+            boolean ok = tapRatio(0.78f, 0.0703f);
+            log("点「领取成功」整颗按钮 手势=" + ok);
+        } else {
+            log("广告页还是关不掉，直接把汽水音乐拉回歌曲页");
+            launchTargetClear();
+            if (mAdSeen) {
+                finishClaim();
+            }
+            mAdSeen = false;
+            mCloseSteps = 0;
+            mPauseUntil = System.currentTimeMillis() + 8000L;
+            enterState(IDLE);
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
         }
-        mAdSeen = false;
-        mCloseSteps = 0;
-        mPauseUntil = System.currentTimeMillis() + 8000L;
-        enterState(IDLE);
-        scheduleNext(Config.POLL_INTERVAL_MS);
+        scheduleNext(2200L);
     }
 
     private void forceResetTarget() {
@@ -581,6 +598,22 @@ public class AdWatchService extends AccessibilityService {
         path.moveTo(x, y);
         GestureDescription.StrokeDescription stroke =
                 new GestureDescription.StrokeDescription(path, 0L, 150L);
+        GestureDescription description = new GestureDescription.Builder()
+                .addStroke(stroke)
+                .build();
+        return dispatchGesture(description, null, null);
+    }
+
+    private boolean longPressRatio(float xRatio, float yRatio) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        int x = Math.round(screenWidth() * xRatio);
+        int y = Math.round(screenHeight() * yRatio);
+        Path path = new Path();
+        path.moveTo(x, y);
+        GestureDescription.StrokeDescription stroke =
+                new GestureDescription.StrokeDescription(path, 0L, 800L);
         GestureDescription description = new GestureDescription.Builder()
                 .addStroke(stroke)
                 .build();
