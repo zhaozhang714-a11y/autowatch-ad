@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
     private TextView remainingDaysText;
     private TextView dumpText;
     private boolean targetLaunched;
+    private boolean autoStarted;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,6 +72,7 @@ public class MainActivity extends Activity {
                 }
             }
         });
+        triggerAutoStart();
     }
 
     @Override
@@ -78,6 +80,30 @@ public class MainActivity extends Activity {
         super.onResume();
         refreshAccessibilityStatus();
         refreshDiagnostics();
+        triggerAutoStart();
+    }
+
+    private void triggerAutoStart() {
+        if (autoStarted) {
+            return;
+        }
+        if (!isAccessibilityServiceEnabled() || !isTargetInstalled()) {
+            return;
+        }
+        autoStarted = true;
+        if (remainingDays() <= 0L) {
+            Toast.makeText(this, "30 天已到期，不再自动开始", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (remainingDaysText != null) {
+            remainingDaysText.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Toast.makeText(MainActivity.this, "已自动开始，正在打开汽水音乐", Toast.LENGTH_SHORT).show();
+                    launchTargetAppOnce();
+                }
+            }, 1200L);
+        }
     }
 
     private boolean isServiceRegistered() {
@@ -159,7 +185,7 @@ public class MainActivity extends Activity {
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
         String target = isTargetInstalled() ? "已安装" : "未安装";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv27 - 稳健版：" + registered
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv28 - 自动开始：" + registered
                 + " - 服务：" + enabled + " - 汽水音乐：" + target);
     }
 
