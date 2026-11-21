@@ -23,6 +23,7 @@ public class AdWatchService extends AccessibilityService {
 
     private static final String CHANNEL_ID = "autowatch_ad_status";
     private static final String[] EXIT_HINTS = {"领取成功", "跳过广告", "跳过", "关闭广告", "稍后再说"};
+    private static final String[] AD_START_HINTS = {"看视频", "立即观看", "点击观看", "观看广告", "继续观看"};
     private static final int MAX_CLOSE_ATTEMPTS = 3;
     private static final long CLOSE_RETRY_MS = 1200L;
 
@@ -181,6 +182,12 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(0L);
             return;
         }
+        AccessibilityNodeInfo start = findClickable(root, AD_START_HINTS);
+        if (start != null && clickNode(start)) {
+            mStateEnteredAt = System.currentTimeMillis();
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
         if (elapsedInState() >= Config.AD_WAIT_MS) {
             enterState(IDLE);
         }
@@ -262,8 +269,11 @@ public class AdWatchService extends AccessibilityService {
         if (root == null || keywords == null || depth > 12) {
             return null;
         }
-        if (isMatching(root, keywords) && root.isClickable()) {
-            return root;
+        if (isMatching(root, keywords)) {
+            AccessibilityNodeInfo clickable = nearestClickable(root);
+            if (clickable != null) {
+                return clickable;
+            }
         }
         int count = root.getChildCount();
         for (int i = 0; i < count; i += 1) {
@@ -272,6 +282,19 @@ public class AdWatchService extends AccessibilityService {
             if (hit != null) {
                 return hit;
             }
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo nearestClickable(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo current = node;
+        int hops = 0;
+        while (current != null && hops <= 5) {
+            if (current.isClickable()) {
+                return current;
+            }
+            current = current.getParent();
+            hops += 1;
         }
         return null;
     }
