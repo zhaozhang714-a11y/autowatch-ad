@@ -1,4 +1,4 @@
-﻿package com.autowatch.ad;
+package com.autowatch.ad;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
