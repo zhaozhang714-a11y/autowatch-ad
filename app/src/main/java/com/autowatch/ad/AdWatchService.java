@@ -171,6 +171,14 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private void step(AccessibilityNodeInfo root) {
+        if (mState != CLOSE_AD && isLivePage()) {
+            if (!mGesturePending && System.currentTimeMillis() - mLastGestureAt >= 3000L) {
+                boolean ok = tapRatio(0.93f, 0.072f);
+                log("当前页面是直播间，先点叉退出直播间 手势=" + ok);
+            }
+            scheduleNext(1200L);
+            return;
+        }
         if (mState == WAIT_ENTRY) {
             runWaitEntry(root);
         } else if (mState == CLOSE_AD) {
@@ -178,6 +186,12 @@ public class AdWatchService extends AccessibilityService {
         } else {
             runIdle(root);
         }
+    }
+
+    private boolean isLivePage() {
+        String low = String.valueOf(sCurClass).toLowerCase();
+        return low.contains("liveplayer") || low.contains("live.player")
+                || low.contains("lunalive") || low.contains("defaultlive");
     }
 
     private boolean isTargetForeground(AccessibilityNodeInfo root) {
@@ -320,14 +334,14 @@ private void runCloseAdBlind(AccessibilityNodeInfo root) {
     }
     mCloseSteps += 1;
     if (mCloseSteps == 2) {
-        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-        log("广告播完，点中间绿色「领取奖励」手势=" + ok);
+        boolean ok = tapRatio(0.93f, 0.072f);
+        log("先点最右上角叉（退出直播间/关闭）手势=" + ok);
     } else if (mCloseSteps == 3) {
-        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("点右上角关闭 手势=" + ok);
+        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+        log("点中间绿色「领取奖励」手势=" + ok);
     } else if (mCloseSteps == 4) {
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("再点一次右上角关闭 手势=" + ok);
+        log("点「领取成功」旁的叉 手势=" + ok);
     } else if (mCloseSteps == 5) {
         boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
         log("长按右上角关闭 手势=" + ok);
@@ -415,12 +429,15 @@ private void actByLook(boolean green) {
     mGreenTaps = 0;
     mCloseSteps += 1;
     if (mCloseSteps <= 2) {
-        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("没看到绿色按钮，点右上角关闭 手势=" + ok);
+        boolean ok = tapRatio(0.93f, 0.072f);
+        log("先点最右上角叉（退出直播间/关闭）手势=" + ok);
     } else if (mCloseSteps <= 4) {
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("点「领取成功」旁的叉 手势=" + ok);
+    } else if (mCloseSteps <= 6) {
         boolean ok = tapRatio(0.878f, 0.945f);
         log("点右下角小叉 手势=" + ok);
-    } else if (mCloseSteps <= 6) {
+    } else if (mCloseSteps <= 8) {
         boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
         log("长按右上角关闭 手势=" + ok);
     } else {
