@@ -233,6 +233,14 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
+        if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
+            if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 2400L) {
+                mShotMode = 1;
+                lookAtScreen();
+            }
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
         mIdleRounds += 1;
         if (mIdleRounds >= 2) {
             mIdleRounds = 0;
@@ -336,10 +344,11 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v27：认字修正版）");
+        log("广告页已出现，开始认字（v29）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
+            mShotMode = 0;
             lookAtScreen();
         }
         scheduleNext(800L);
@@ -403,7 +412,7 @@ private void lookAtScreen() {
                     if (hb != null) {
                         android.graphics.Bitmap soft = hb.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
                         if (soft != null) {
-                            runOcr(soft);
+                            runOcr(soft, mShotMode);
                         }
                     }
                 } catch (Throwable t) {
@@ -436,6 +445,7 @@ private boolean mOcrBusy = false;
 private boolean mOcrFailed = false;
 private long mOcrLogAt = 0L;
 private long mLastCountdownAt = 0L;
+private int mShotMode = 0;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -445,7 +455,7 @@ private com.google.mlkit.vision.text.TextRecognizer ocr() {
     return mOcr;
 }
 
-private void runOcr(android.graphics.Bitmap bmp) {
+private void runOcr(android.graphics.Bitmap bmp, final int mode) {
     if (mOcrBusy) {
         return;
     }
@@ -463,7 +473,11 @@ private void runOcr(android.graphics.Bitmap bmp) {
                     s = "";
                 }
                 safeRecycle(bmp);
-                actByText(s.replace(" ", "").replace("\n", ""));
+                if (mode == 1) {
+                    actByEntry(result);
+                } else {
+                    actByText(s.replace(" ", "").replace("\n", ""));
+                }
             }
         }).addOnFailureListener(new com.google.android.gms.tasks.OnFailureListener() {
             @Override
@@ -496,6 +510,46 @@ private String brief(String s) {
         return "";
     }
     return s.length() > 16 ? s.substring(0, 16) : s;
+}
+
+private void actByEntry(com.google.mlkit.vision.text.Text result) {
+    if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
+        return;
+    }
+    if (mState != IDLE) {
+        return;
+    }
+    int w = getResources().getDisplayMetrics().widthPixels;
+    int h = getResources().getDisplayMetrics().heightPixels;
+    for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
+        String s = block.getText();
+        if (s == null) {
+            continue;
+        }
+        s = s.replace(" ", "").replace("\n", "");
+        if (!s.contains("免费听") || s.contains("提前")) {
+            continue;
+        }
+        android.graphics.Rect r = block.getBoundingBox();
+        if (r == null) {
+            continue;
+        }
+        float cy = (r.top + r.bottom) * 0.5f / h;
+        float cx = (r.left + r.right) * 0.5f / w;
+        if (cy < 0.18f || cy > 0.70f) {
+            continue;
+        }
+        if (cx < 0.55f) {
+            continue;
+        }
+        boolean ok = tapRatio(cx, cy);
+        log("截到「" + brief(s) + "」按钮，点它 手势=" + ok);
+        if (ok) {
+            mIdleRounds = 0;
+            enterState(WAIT_ENTRY);
+        }
+        return;
+    }
 }
 
 private void actByText(String s) {
