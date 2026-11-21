@@ -185,7 +185,7 @@ public class MainActivity extends Activity {
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
         String target = isTargetInstalled() ? "已安装" : "未安装";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv29 - 认字找入口：" + registered
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv30 - 认字范围扩大：" + registered
                 + " - 服务：" + enabled + " - 汽水音乐：" + target);
     }
 
