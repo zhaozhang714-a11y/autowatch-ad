@@ -122,14 +122,14 @@ public class MainActivity extends Activity {
         }
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv2 · 系统识别：" + registered + " · 服务：" + enabled);
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv2 - 系统识别：" + registered + " - 服务：" + enabled);
     }
 
     private void openAccessibilitySettings() {
         boolean registered = isServiceRegistered();
         if (registered && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                Intent detail = new Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                Intent detail = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
                 detail.putExtra(Intent.EXTRA_COMPONENT_NAME,
                         new ComponentName(this, AdWatchService.class).flattenToString());
                 detail.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
