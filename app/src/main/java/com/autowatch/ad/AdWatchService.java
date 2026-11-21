@@ -29,6 +29,10 @@ public class AdWatchService extends AccessibilityService {
     private static final String[] AD_START_HINTS = {"看视频", "立即观看", "点击观看", "观看广告", "继续观看"};
     private static final int MAX_CLOSE_ATTEMPTS = 3;
     private static final long CLOSE_RETRY_MS = 1200L;
+    private static final float ENTRY_FALLBACK_X = 0.75f;
+    private static final float ENTRY_FALLBACK_Y = 0.80f;
+    private static final int FALLBACK_AFTER_ROUNDS = 3;
+    private static final long FALLBACK_COOLDOWN_MS = 40000L;
 
     private static AdWatchService sInstance;
     private static String sLastDump = "尚未采集";
@@ -48,6 +52,7 @@ public class AdWatchService extends AccessibilityService {
     private int mClaimStep = 0;
     private long mStateEnteredAt = 0L;
     private long mRunStartedAt = 0L;
+    private long mLastFallbackAt = 0L;
     private boolean mStopping = false;
     private int mCloseAttempts = 0;
 
@@ -170,12 +175,20 @@ public class AdWatchService extends AccessibilityService {
             return;
         }
         mIdleRounds += 1;
-        if (mIdleRounds >= Config.MAX_IDLE_ROUNDS) {
-            mIdleRounds = 0;
-        }
         if (System.currentTimeMillis() - sLastDumpAt > 2000L) {
             sLastDump = describeTree(root);
             sLastDumpAt = System.currentTimeMillis();
+        }
+        if (mIdleRounds >= FALLBACK_AFTER_ROUNDS
+                && System.currentTimeMillis() - mLastFallbackAt > FALLBACK_COOLDOWN_MS) {
+            mLastFallbackAt = System.currentTimeMillis();
+            mIdleRounds = 0;
+            if (tapRatio(ENTRY_FALLBACK_X, ENTRY_FALLBACK_Y)) {
+                sLastDump = "已按坐标兜底点击免费听1天按钮\n" + sLastDump;
+                enterState(WAIT_AD);
+                scheduleNext(Config.POLL_INTERVAL_MS);
+                return;
+            }
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
@@ -291,6 +304,7 @@ public class AdWatchService extends AccessibilityService {
             if (clickable != null) {
                 return clickable;
             }
+            return root;
         }
         int count = root.getChildCount();
         for (int i = 0; i < count; i += 1) {
@@ -350,8 +364,24 @@ public class AdWatchService extends AccessibilityService {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return false;
         }
+        return tapPoint(rect.centerX(), rect.centerY());
+    }
+
+    private boolean tapRatio(float xRatio, float yRatio) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        int width = getResources().getDisplayMetrics().widthPixels;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        return tapPoint(Math.round(width * xRatio), Math.round(height * yRatio));
+    }
+
+    private boolean tapPoint(int x, int y) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
         Path path = new Path();
-        path.moveTo(rect.centerX(), rect.centerY());
+        path.moveTo(x, y);
         GestureDescription.StrokeDescription stroke =
                 new GestureDescription.StrokeDescription(path, 0L, 80L);
         GestureDescription description = new GestureDescription.Builder()
@@ -363,6 +393,8 @@ public class AdWatchService extends AccessibilityService {
     private String describeTree(AccessibilityNodeInfo root) {
         StringBuilder sb = new StringBuilder();
         sb.append("pkg=").append(textOf(root.getPackageName())).append("\n");
+        sb.append("size=").append(getResources().getDisplayMetrics().widthPixels)
+                .append("x").append(getResources().getDisplayMetrics().heightPixels).append("\n");
         collect(root, sb, 0);
         if (sb.length() <= 0) {
             return "空节点树";
