@@ -73,6 +73,7 @@ public class AdWatchService extends AccessibilityService {
     private boolean mGesturePending = false;
     private long mLastGestureAt = 0L;
     private long mClaimTappedAt = 0L;
+    private int mNewAdCount = 0;
 
     static String getLastDump() {
         return sLastDump;
@@ -136,6 +137,7 @@ public class AdWatchService extends AccessibilityService {
         if (state == CLOSE_AD) {
             mCloseSteps = 0;
             mClaimTappedAt = 0L;
+            mNewAdCount = 0;
         }
     }
 
@@ -261,96 +263,90 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private void runCloseAd(AccessibilityNodeInfo root) {
-        if (!isAdPage(root) && !dialogVisible(root)) {
-            if (elapsedInState() < 1200L) {
-                scheduleNext(300L);
-                return;
+    if (!isAdPage(root) && !dialogVisible(root)) {
+        if (elapsedInState() < 1200L) {
+            scheduleNext(300L);
+            return;
+        }
+        log("已回到歌曲页，本轮结束");
+        mNewAdCount = 0;
+        mClaimTappedAt = 0L;
+        if (mAdSeen) {
+            finishClaim();
+            if (tapRatio(SHEET_X, SHEET_Y)) {
+                log("关掉畅听卡片");
             }
-            log("已回到歌曲页，本轮结束");
-            if (mAdSeen) {
-                finishClaim();
-                if (tapRatio(SHEET_X, SHEET_Y)) {
-                    log("关掉畅听卡片");
-                }
-            }
-            mPauseUntil = System.currentTimeMillis() + 4000L;
-            enterState(IDLE);
+        }
+        mPauseUntil = System.currentTimeMillis() + 4000L;
+        enterState(IDLE);
+        scheduleNext(Config.POLL_INTERVAL_MS);
+        return;
+    }
+    if (dialogVisible(root)) {
+        if (tapClaim(root)) {
+            log("先点领取奖励再关闭");
+            mStateEnteredAt = System.currentTimeMillis();
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (dialogVisible(root)) {
-            if (tapClaim(root)) {
-                log("先点领取奖励再关闭");
-                mStateEnteredAt = System.currentTimeMillis();
-                scheduleNext(Config.POLL_INTERVAL_MS);
-                return;
-            }
+    }
+    if (elapsedInState() < AD_MIN_WATCH_MS) {
+        if (mCloseSteps == 0) {
+            mCloseSteps = 1;
+            log("广告页已出现，静等 45 秒播放完再点（不点屏幕）");
         }
-        if (mClaimTappedAt > 0L && System.currentTimeMillis() - mClaimTappedAt > 2500L) {
-            boolean stillDone = hasAnyText(root, EXIT_HINTS, 0);
-            mClaimTappedAt = 0L;
-            if (!stillDone) {
-                mStateEnteredAt = System.currentTimeMillis();
-                mCloseSteps = 1;
-                log("又开了一条新广告，重新计时 45 秒");
-                scheduleNext(800L);
-                return;
-            }
-        }
-        boolean adDone = hasAnyText(root, EXIT_HINTS, 0);
-        if (elapsedInState() < AD_MIN_WATCH_MS) {
-            if (mCloseSteps == 0) {
-                mCloseSteps = 1;
-                log("广告页已出现，静等 45 秒播放完再关（不点屏幕）");
-            }
+        scheduleNext(800L);
+        return;
+    }
+    if (mClaimTappedAt > 0L && System.currentTimeMillis() - mClaimTappedAt > 3000L) {
+        mClaimTappedAt = 0L;
+        mNewAdCount += 1;
+        if (mNewAdCount <= 2) {
+            mStateEnteredAt = System.currentTimeMillis();
+            mCloseSteps = 1;
+            log("点了领取奖励后还在广告页，按新一条广告重新计时 45 秒");
             scheduleNext(800L);
             return;
         }
-        if (!adDone && elapsedInState() < AD_MIN_WATCH_MS + 12000L) {
-            if (mCloseSteps <= 1) {
-                log("页头还没变成「领取成功」，再等一会儿");
-            }
-            scheduleNext(1000L);
-            return;
-        }
-        if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
-            scheduleNext(1000L);
-            return;
-        }
-        mCloseSteps += 1;
-        if (mCloseSteps == 2) {
-            if (adDone) {
-                boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-                log("点中间绿色「领取奖励」手势=" + ok);
-                mClaimTappedAt = System.currentTimeMillis();
-            } else {
-                boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-                log("没看到「领取成功」，先点右上角关闭 手势=" + ok);
-            }
-        } else if (mCloseSteps == 3) {
-            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("点右上角关闭 手势=" + ok);
-        } else if (mCloseSteps == 4) {
-            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("再点一次右上角关闭 手势=" + ok);
-        } else if (mCloseSteps == 5) {
-            boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
-            log("长按右上角关闭 手势=" + ok);
-        } else {
-            log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
-            mAdSeen = false;
-            mCloseSteps = 0;
-            mClaimTappedAt = 0L;
-            mPauseUntil = System.currentTimeMillis() + 8000L;
-            enterState(IDLE);
-            launchTargetClear();
-            scheduleNext(Config.POLL_INTERVAL_MS);
-            return;
-        }
-        scheduleNext(GESTURE_GAP_MS);
     }
-
-    private void forceResetTarget() {
+    if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
+        scheduleNext(1000L);
+        return;
+    }
+    mCloseSteps += 1;
+    if (mCloseSteps == 2) {
+        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+        log("广告播完，点中间绿色「领取奖励」手势=" + ok);
+        mClaimTappedAt = System.currentTimeMillis();
+    } else if (mCloseSteps == 3) {
+        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+        log("再点一次绿色「领取奖励」手势=" + ok);
+    } else if (mCloseSteps == 4) {
+        boolean ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
+        log("点「坚持退出」关掉弹窗 手势=" + ok);
+    } else if (mCloseSteps == 5) {
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("点右上角关闭 手势=" + ok);
+    } else if (mCloseSteps == 6) {
+        boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
+        log("长按右上角关闭 手势=" + ok);
+    } else if (mCloseSteps == 7) {
+        boolean ok = tapRatio(0.50f, 0.753f);
+        log("点屏幕底部圆形关闭 手势=" + ok);
+    } else {
+        log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
+        mAdSeen = false;
+        mCloseSteps = 0;
+        mClaimTappedAt = 0L;
+        mNewAdCount = 0;
+        mPauseUntil = System.currentTimeMillis() + 8000L;
+        enterState(IDLE);
+        launchTargetClear();
+        scheduleNext(Config.POLL_INTERVAL_MS);
+        return;
+    }
+    scheduleNext(GESTURE_GAP_MS);
+}private void forceResetTarget() {
         mResetCount += 1;
         if (mResetCount >= 3) {
             mResetCount = 0;
