@@ -478,7 +478,7 @@ private int analyzeShot(android.graphics.Bitmap bmp) {
     if (isRedPixel(bmp.getPixel(Math.round(w * 0.395f), Math.round(h * 0.0726f))) || isRedPixel(bmp.getPixel(Math.round(w * 0.455f), Math.round(h * 0.0726f))) {
         return 3;
     }
-    if (isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f))
+    if (isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f)))
             && isRedPixel(bmp.getPixel(Math.round(w * 0.86f), Math.round(h * 0.177f))) {
         return 2;
     }
