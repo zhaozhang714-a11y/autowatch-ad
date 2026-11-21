@@ -36,6 +36,8 @@ public class AdWatchService extends AccessibilityService {
     private static final float DIALOG_EXIT_Y = 0.609f;
     private static final float CLOSE_X = 0.905f;
     private static final float CLOSE_Y = 0.0725f;
+    private static final float SHEET_X = 0.912f;
+    private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
     private static final int MAX_CLOSE_STEPS = 6;
 
@@ -54,6 +56,7 @@ public class AdWatchService extends AccessibilityService {
 
     private Prefs mPrefs;
     private int mState = IDLE;
+    private int mEntryAttempts = 0;
     private int mIdleRounds = 0;
     private int mCloseSteps = 0;
     private long mStateEnteredAt = 0L;
@@ -230,8 +233,15 @@ public class AdWatchService extends AccessibilityService {
             return;
         }
         if (elapsed >= 10000L) {
-            log("等了 10 秒没进广告页，重新尝试");
-            mPauseUntil = System.currentTimeMillis() + 2000L;
+            mEntryAttempts += 1;
+            if (mEntryAttempts % 2 == 1) {
+                tapRatio(SHEET_X, SHEET_Y);
+                log("入口没反应，先关掉畅听卡片再试");
+                mPauseUntil = System.currentTimeMillis() + 1200L;
+            } else {
+                log("等了 10 秒没进广告页，重新尝试");
+                mPauseUntil = System.currentTimeMillis() + 2000L;
+            }
             enterState(IDLE);
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
@@ -242,8 +252,11 @@ public class AdWatchService extends AccessibilityService {
             log("已回到歌曲页，本轮结束");
             if (mAdSeen) {
                 finishClaim();
+                if (tapRatio(SHEET_X, SHEET_Y)) {
+                    log("关掉畅听卡片");
+                }
             }
-            mPauseUntil = System.currentTimeMillis() + 3000L;
+            mPauseUntil = System.currentTimeMillis() + 4000L;
             enterState(IDLE);
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
