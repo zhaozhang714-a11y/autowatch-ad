@@ -45,6 +45,7 @@ public class AdWatchService extends AccessibilityService {
 
     private static AdWatchService sInstance;
     private static String sLastDump = "尚未采集";
+    private static String sCurClass = "?";
     private static long sLastDumpAt = 0L;
     private static String sLog = "";
 
@@ -66,6 +67,7 @@ public class AdWatchService extends AccessibilityService {
     private long mPauseUntil = 0L;
     private boolean mAdSeen = false;
     private boolean mStopping = false;
+    private int mResetCount = 0;
 
     static String getLastDump() {
         return sLastDump;
@@ -105,6 +107,10 @@ public class AdWatchService extends AccessibilityService {
         CharSequence pkg = event.getPackageName();
         if (pkg == null || !Config.TARGET_PACKAGE.equals(pkg.toString())) {
             return;
+        }
+        CharSequence cls = event.getClassName();
+        if (cls != null && event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            sCurClass = cls.toString();
         }
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) {
@@ -236,12 +242,17 @@ public class AdWatchService extends AccessibilityService {
         }
         if (elapsed >= 10000L) {
             mEntryAttempts += 1;
+            if (mEntryAttempts >= 4) {
+                log("入口连续没反应，重启汽水音乐 class=" + sCurClass);
+                forceResetTarget();
+                return;
+            }
             if (mEntryAttempts % 2 == 1) {
                 tapRatio(SHEET_X, SHEET_Y);
                 log("入口没反应，先关掉畅听卡片再试");
                 mPauseUntil = System.currentTimeMillis() + 1200L;
             } else {
-                log("等了 10 秒没进广告页，重新尝试");
+                log("等了 10 秒没进广告页，重新尝试 class=" + sCurClass);
                 mPauseUntil = System.currentTimeMillis() + 2000L;
             }
             enterState(IDLE);
@@ -304,9 +315,21 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private void forceResetTarget() {
+        mResetCount += 1;
+        if (mResetCount >= 3) {
+            mResetCount = 0;
+            mEntryAttempts = 0;
+            mCloseSteps = 0;
+            log("连续重启仍没进广告页，暂停一会儿，请把汽水音乐回到歌曲页");
+            mPauseUntil = System.currentTimeMillis() + 60000L;
+            enterState(IDLE);
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
         performGlobalAction(GLOBAL_ACTION_HOME);
         mAdSeen = false;
         mCloseSteps = 0;
+        mEntryAttempts = 0;
         mPauseUntil = System.currentTimeMillis() + 8000L;
         enterState(IDLE);
         mHandler.postDelayed(new Runnable() {
@@ -349,6 +372,7 @@ public class AdWatchService extends AccessibilityService {
 
     private void finishClaim() {
         mPrefs.incrementCount();
+        mResetCount = 0;
         log("本轮领取完成，累计 " + mPrefs.getCount() + " 次");
         if (System.currentTimeMillis() - mPrefs.getFirstRunMs() >= Config.THIRTY_DAYS_MS) {
             mStopping = true;
@@ -386,7 +410,12 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private boolean isAdPage(AccessibilityNodeInfo root) {
-        return hasAnyText(root, AD_PAGE_HINTS, 0);
+        if (hasAnyText(root, AD_PAGE_HINTS, 0)) {
+            return true;
+        }
+        String low = String.valueOf(sCurClass).toLowerCase();
+        return low.contains("adactivity") || low.contains("ads.") || low.contains(".ad.")
+                || low.contains("adwebview") || low.contains("adcontainer");
     }
 
     private boolean dialogVisible(AccessibilityNodeInfo root) {
@@ -422,7 +451,7 @@ public class AdWatchService extends AccessibilityService {
         if (root == null || keywords == null || depth > 12) {
             return null;
         }
-        if (isMatching(root, keywords)) {
+        if (isMatching(root, keywords) && isOnScreen(root)) {
             AccessibilityNodeInfo clickable = nearestClickable(root);
             if (clickable != null) {
                 return clickable;
@@ -438,6 +467,16 @@ public class AdWatchService extends AccessibilityService {
             }
         }
         return null;
+    }
+
+    private boolean isOnScreen(AccessibilityNodeInfo node) {
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+        if (rect.width() <= 0 || rect.height() <= 0) {
+            return false;
+        }
+        int h = screenHeight();
+        return rect.centerY() > 0 && rect.centerY() < h && rect.centerX() > 0 && rect.centerX() < screenWidth();
     }
 
     private AccessibilityNodeInfo nearestClickable(AccessibilityNodeInfo node) {
@@ -607,3 +646,4 @@ public class AdWatchService extends AccessibilityService {
         }
     }
 }
+直接
