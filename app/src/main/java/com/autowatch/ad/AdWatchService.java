@@ -2,6 +2,7 @@ package com.autowatch.ad;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.accessibilityservice.GestureResultCallback;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -41,7 +42,8 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
-    private static final long AD_MIN_WATCH_MS = 52000L;
+    private static final long AD_MIN_WATCH_MS = 45000L;
+    private static final long GESTURE_GAP_MS = 3000L;
     private static final int MAX_CLOSE_STEPS = 3;
 
     private static AdWatchService sInstance;
@@ -69,6 +71,8 @@ public class AdWatchService extends AccessibilityService {
     private boolean mAdSeen = false;
     private boolean mStopping = false;
     private int mResetCount = 0;
+    private boolean mGesturePending = false;
+    private long mLastGestureAt = 0L;
 
     static String getLastDump() {
         return sLastDump;
@@ -113,12 +117,6 @@ public class AdWatchService extends AccessibilityService {
         if (cls != null && event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             sCurClass = cls.toString();
         }
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) {
-            scheduleNext(Config.POLL_INTERVAL_MS);
-            return;
-        }
-        step(root);
     }
 
     @Override
@@ -290,9 +288,13 @@ public class AdWatchService extends AccessibilityService {
         if (elapsedInState() < AD_MIN_WATCH_MS) {
             if (mCloseSteps == 0) {
                 mCloseSteps = 1;
-                log("广告页已出现，静等 52 秒播放完再关（不点屏幕）");
+                log("广告页已出现，静等 45 秒播放完再关（不点屏幕）");
             }
             scheduleNext(800L);
+            return;
+        }
+        if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
+            scheduleNext(1000L);
             return;
         }
         mCloseSteps += 1;
@@ -309,19 +311,16 @@ public class AdWatchService extends AccessibilityService {
             boolean ok = tapRatio(0.78f, 0.0703f);
             log("点「领取成功」整颗按钮 手势=" + ok);
         } else {
-            log("广告页还是关不掉，直接把汽水音乐拉回歌曲页");
-            launchTargetClear();
-            if (mAdSeen) {
-                finishClaim();
-            }
+            log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
             mAdSeen = false;
             mCloseSteps = 0;
             mPauseUntil = System.currentTimeMillis() + 8000L;
             enterState(IDLE);
+            launchTargetClear();
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        scheduleNext(2200L);
+        scheduleNext(GESTURE_GAP_MS);
     }
 
     private void forceResetTarget() {
@@ -591,33 +590,49 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private boolean tapPoint(int x, int y) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return false;
-        }
-        Path path = new Path();
-        path.moveTo(x, y);
-        GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0L, 150L);
-        GestureDescription description = new GestureDescription.Builder()
-                .addStroke(stroke)
-                .build();
-        return dispatchGesture(description, null, null);
+        return pressPoint(x, y, 150L);
     }
 
     private boolean longPressRatio(float xRatio, float yRatio) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return false;
         }
-        int x = Math.round(screenWidth() * xRatio);
-        int y = Math.round(screenHeight() * yRatio);
+        return pressPoint(Math.round(screenWidth() * xRatio), Math.round(screenHeight() * yRatio), 800L);
+    }
+
+    private boolean pressPoint(final int x, final int y, long durationMs) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        if (mGesturePending) {
+            return false;
+        }
         Path path = new Path();
         path.moveTo(x, y);
         GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0L, 800L);
+                new GestureDescription.StrokeDescription(path, 0L, durationMs);
         GestureDescription description = new GestureDescription.Builder()
                 .addStroke(stroke)
                 .build();
-        return dispatchGesture(description, null, null);
+        mGesturePending = true;
+        mLastGestureAt = System.currentTimeMillis();
+        boolean ok = dispatchGesture(description, new GestureResultCallback() {
+            @Override
+            public void onCompleted(GestureDescription gesture) {
+                mGesturePending = false;
+                log("手势完成 (" + x + "," + y + ")");
+            }
+
+            @Override
+            public void onCancelled(GestureDescription gesture) {
+                mGesturePending = false;
+                log("手势被系统取消 (" + x + "," + y + ")");
+            }
+        }, null);
+        if (!ok) {
+            mGesturePending = false;
+        }
+        return ok;
     }
 
     private String brief(AccessibilityNodeInfo node) {
