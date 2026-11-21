@@ -31,9 +31,11 @@ public class AdWatchService extends AccessibilityService {
     private static final float ENTRY_X = 0.706f;
     private static final float ENTRY_Y = 0.597f;
     private static final float CLAIM_X = 0.50f;
-    private static final float CLAIM_Y = 0.391f;
-    private static final float CLOSE_X = 0.825f;
-    private static final float CLOSE_Y = 0.055f;
+    private static final float CLAIM_Y = 0.552f;
+    private static final float DIALOG_EXIT_X = 0.50f;
+    private static final float DIALOG_EXIT_Y = 0.609f;
+    private static final float CLOSE_X = 0.905f;
+    private static final float CLOSE_Y = 0.0725f;
     private static final long CLOSE_RETRY_MS = 1200L;
     private static final int MAX_CLOSE_STEPS = 6;
 
@@ -227,8 +229,8 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (elapsed >= 6000L) {
-            log("等了 6 秒没进广告页，重新尝试");
+        if (elapsed >= 10000L) {
+            log("等了 10 秒没进广告页，重新尝试");
             mPauseUntil = System.currentTimeMillis() + 2000L;
             enterState(IDLE);
         }
@@ -274,9 +276,16 @@ public class AdWatchService extends AccessibilityService {
         }
         if (close != null && clickNode(close)) {
             log("点击关闭节点 " + brief(close));
-        } else if (tapRatio(CLOSE_X, CLOSE_Y)) {
-            log("按坐标点右上角关闭 第" + mCloseSteps + "次");
+        } else if (mCloseSteps == 1) {
+            if (tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y)) {
+                log("点坚持退出，关掉再看视频弹窗");
+            }
+        } else if (mCloseSteps <= 4) {
+            if (tapRatio(CLOSE_X, CLOSE_Y)) {
+                log("点右上角关闭 第" + mCloseSteps + "次");
+            }
         } else {
+            log("改按返回键退出广告");
             performGlobalAction(GLOBAL_ACTION_BACK);
         }
         scheduleNext(CLOSE_RETRY_MS);
