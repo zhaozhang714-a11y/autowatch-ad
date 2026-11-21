@@ -148,6 +148,8 @@ public class AdWatchService extends AccessibilityService {
             mLastCountdownAt = 0L;
             mAdEndAt = 0L;
             mBonusRefused = 0;
+            mRewardDialogs = 0;
+            mPillFound = false;
         }
     }
 
@@ -395,7 +397,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v36：奖励弹窗点领取奖励）");
+        log("广告页已出现，开始认字（v37：识别绿色按钮再点）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -504,6 +506,10 @@ private long mOcrStartAt = 0L;
 private long mAdEndAt = 0L;
 private int mBonusRefused = 0;
 private int mRewardDialogs = 0;
+private long mPillAt = 0L;
+private int mPillCx = 0;
+private int mPillCy = 0;
+private boolean mPillFound = false;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -523,6 +529,9 @@ private void runOcr(android.graphics.Bitmap bmp, final int mode) {
     }
     mOcrBusy = true;
     mOcrStartAt = System.currentTimeMillis();
+    if (mode == 0) {
+        scanGreenPill(bmp);
+    }
     try {
         com.google.mlkit.vision.common.InputImage img =
                 com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0);
@@ -681,9 +690,23 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     if (rewardDialog) {
         mGreenTaps = 0;
         mAdEndAt = 0L;
-        boolean ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
-                new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
-                0.30f, 0.95f, "看到「第N日免费听」奖励弹窗，点绿色「领取奖励」");
+        int w = getResources().getDisplayMetrics().widthPixels;
+        int h = getResources().getDisplayMetrics().heightPixels;
+        if (mRewardDialogs >= 2) {
+            log("这个奖励弹窗已经点过 " + mRewardDialogs + " 次还没消失，改成关广告页");
+            closeLadder();
+            return;
+        }
+        boolean ok = false;
+        if (mPillFound && now - mPillAt < 5000L) {
+            ok = tapRatio((float) mPillCx / w, (float) mPillCy / h);
+            log("弹窗绿色按钮认出来了（" + mPillCx + "," + mPillCy + "），点「领取奖励」手势=" + ok);
+        }
+        if (!ok) {
+            ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
+                    new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
+                    0.30f, 0.95f, "看到「第N日免费听」奖励弹窗，点绿色「领取奖励」");
+        }
         if (ok) {
             mCloseSteps = 0;
             mRewardDialogs += 1;
@@ -798,6 +821,59 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         return;
     }
     closeLadder();
+}
+
+private void scanGreenPill(android.graphics.Bitmap bmp) {
+    mPillFound = false;
+    if (bmp == null) {
+        return;
+    }
+    try {
+        int w = bmp.getWidth();
+        int h = bmp.getHeight();
+        int top = -1;
+        int bottom = -1;
+        int xLeft = w;
+        int xRight = -1;
+        for (int y = (int) (h * 0.34f); y < (int) (h * 0.64f); y += 6) {
+            int first = -1;
+            int last = -1;
+            int cnt = 0;
+            for (int x = (int) (w * 0.12f); x < (int) (w * 0.90f); x += 6) {
+                int c = bmp.getPixel(x, y);
+                int r = (c >> 16) & 0xff;
+                int g = (c >> 8) & 0xff;
+                int b = c & 0xff;
+                if (g > 135 && g - r > 30 && g - b > 30) {
+                    if (first < 0) {
+                        first = x;
+                    }
+                    last = x;
+                    cnt += 1;
+                }
+            }
+            if (cnt > 40 && (last - first) > w * 0.45f) {
+                if (top < 0) {
+                    top = y;
+                }
+                bottom = y;
+                if (first < xLeft) {
+                    xLeft = first;
+                }
+                if (last > xRight) {
+                    xRight = last;
+                }
+            }
+        }
+        if (top < 0 || bottom - top < 60 || xRight - xLeft < w * 0.45f) {
+            return;
+        }
+        mPillFound = true;
+        mPillCx = (xLeft + xRight) / 2;
+        mPillCy = (top + bottom) / 2;
+        mPillAt = System.currentTimeMillis();
+    } catch (Throwable ignored) {
+    }
 }
 
 private boolean tapLineOn(com.google.mlkit.vision.text.Text result, String[] keys, String[] bans,
