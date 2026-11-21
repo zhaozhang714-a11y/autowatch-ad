@@ -486,7 +486,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v40：奖励弹窗按绿按钮实际位置点）");
+        log("广告页已出现，开始认字（v41：落地页点左上返回箭头）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -766,7 +766,9 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     if (s.contains("权限")) {
         marks += 1;
     }
-    boolean landing = marks >= 2 && !countdown;
+    boolean landing = marks >= 2 && !countdown
+            && (finished || s.contains("提现") || s.contains("我的现金")
+            || s.contains("下载") || s.contains("安装") || s.contains("元"));
     boolean quiet = now - mOcrLogAt < 6000L;
     long sinceCountdown = now - mLastCountdownAt;
 
@@ -894,17 +896,23 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         return;
     }
 
-    if (landing && timeOk && sinceCountdown > 6000L) {
+    if (landing && el >= 8000L && sinceCountdown > 6000L) {
         mGreenTaps = 0;
-        int step = (mCloseSteps % 2) + 1;
+        int step = (mCloseSteps % 4) + 1;
         mCloseSteps = mCloseSteps + 1;
         boolean ok;
         if (step == 1) {
-            ok = tapRatio(0.878f, 0.945f);
-            log("识别到广告落地页，点底部小叉 手势=" + ok);
-        } else {
+            ok = tapRatio(0.053f, 0.074f);
+            log("识别到广告落地页（提现/下载那种），点它左上角返回箭头 手势=" + ok);
+        } else if (step == 2) {
             ok = tapRatio(CLOSE_X, CLOSE_Y);
             log("落地页还在，点右上角叉 手势=" + ok);
+        } else if (step == 3) {
+            ok = tapRatio(0.878f, 0.945f);
+            log("落地页还在，点右下角小叉 手势=" + ok);
+        } else {
+            ok = performGlobalAction(GLOBAL_ACTION_BACK);
+            log("落地页还在，按一次返回键 手势=" + ok);
         }
         return;
     }
