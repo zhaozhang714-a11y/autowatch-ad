@@ -41,6 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
+    private static final long AD_MIN_WATCH_MS = 30000L;
     private static final int MAX_CLOSE_STEPS = 3;
 
     private static AdWatchService sInstance;
@@ -282,36 +283,24 @@ public class AdWatchService extends AccessibilityService {
                 return;
             }
         }
-        if (elapsedInState() < CLOSE_RETRY_MS) {
-            scheduleNext(200L);
-            return;
-        }
-        mStateEnteredAt = System.currentTimeMillis();
-        mCloseSteps += 1;
-        if (mCloseSteps > MAX_CLOSE_STEPS) {
-            log("广告页关不掉，改用重启汽水音乐");
-            forceResetTarget();
-            return;
-        }
-        AccessibilityNodeInfo close = findClickable(root, Config.CLOSE_KEYWORDS);
-        if (close == null) {
-            close = findClickable(root, EXIT_HINTS);
-        }
-        if (close != null && clickNode(close)) {
-            log("点击关闭节点 " + brief(close));
-        } else if (mCloseSteps <= 4) {
-            if (mCloseSteps <= 2) {
-                boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-                log("点右上角关闭 第" + mCloseSteps + "次 手势=" + ok);
-            } else {
-                boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-                log("点中间大按钮（继续观看/领取奖励）第" + mCloseSteps + "次 手势=" + ok);
+        if (elapsedInState() < AD_MIN_WATCH_MS) {
+            if (mCloseSteps == 0) {
+                mCloseSteps = 1;
+                log("广告页已出现，静等播放完（不点屏幕）");
             }
-        } else {
-            log("最后再按一次返回键");
-            performGlobalAction(GLOBAL_ACTION_BACK);
+            scheduleNext(800L);
+            return;
         }
-        scheduleNext(CLOSE_RETRY_MS);
+        log("广告看完 30 秒，直接把汽水音乐拉回歌曲页");
+        launchTargetClear();
+        if (mAdSeen) {
+            finishClaim();
+        }
+        mAdSeen = false;
+        mCloseSteps = 0;
+        mPauseUntil = System.currentTimeMillis() + 8000L;
+        enterState(IDLE);
+        scheduleNext(Config.POLL_INTERVAL_MS);
     }
 
     private void forceResetTarget() {
