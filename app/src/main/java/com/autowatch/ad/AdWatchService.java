@@ -149,6 +149,8 @@ public class AdWatchService extends AccessibilityService {
             mAdEndAt = 0L;
             mBonusRefused = 0;
             mRewardDialogs = 0;
+            mHeaderTaps = 0;
+            mHeadClaimAt = 0L;
             mPillFound = false;
         }
     }
@@ -484,10 +486,10 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v38：拦系统跳转弹窗）");
+        log("广告页已出现，开始认字（v39：页头领取成功立刻点）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
-        if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
+        if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
             mShotMode = 0;
             lookAtScreen();
         }
@@ -593,6 +595,8 @@ private long mOcrStartAt = 0L;
 private long mAdEndAt = 0L;
 private int mBonusRefused = 0;
 private int mRewardDialogs = 0;
+private int mHeaderTaps = 0;
+private long mHeadClaimAt = 0L;
 private long mPillAt = 0L;
 private int mPillCx = 0;
 private int mPillCy = 0;
@@ -856,14 +860,29 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
 
     if (claim && timeOk) {
         mGreenTaps = 0;
-        boolean ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
+        boolean ok = false;
+        if (mHeaderTaps < 3) {
+            ok = tapLineOnFrac(result, new String[]{"领取成功", "领取奖励"},
+                    new String[]{"秒", "金币", "待领取", "提现", "我的"},
+                    0.012f, 0.17f, 0.30f, "页头变成「领取成功」，立刻点它领取");
+            if (ok) {
+                mHeaderTaps += 1;
+                mHeadClaimAt = now;
+                return;
+            }
+        }
+        ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
                 new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
                 0.25f, 0.95f, "广告播完，点「领取奖励」按钮");
         if (ok) {
             mCloseSteps = 0;
             return;
         }
-        log("只有页头的「领取成功」，没有领取按钮，直接关广告页");
+        if (mHeaderTaps > 0 && now - mHeadClaimAt < 10000L) {
+            log("刚点过页头的「领取成功」，再等它反应");
+            return;
+        }
+        log("页头「领取成功」点了几次，还是没奖励按钮，直接关广告页");
         closeLadder();
         return;
     }
@@ -957,6 +976,11 @@ private void scanGreenPill(android.graphics.Bitmap bmp) {
 
 private boolean tapLineOn(com.google.mlkit.vision.text.Text result, String[] keys, String[] bans,
                           float minY, float maxY, String what) {
+    return tapLineOnFrac(result, keys, bans, minY, maxY, 0.5f, what);
+}
+
+private boolean tapLineOnFrac(com.google.mlkit.vision.text.Text result, String[] keys, String[] bans,
+                          float minY, float maxY, float fracX, String what) {
     int w = getResources().getDisplayMetrics().widthPixels;
     int h = getResources().getDisplayMetrics().heightPixels;
     android.graphics.Rect best = null;
@@ -1005,7 +1029,7 @@ private boolean tapLineOn(com.google.mlkit.vision.text.Text result, String[] key
     if (best == null) {
         return false;
     }
-    int px = (best.left + best.right) / 2;
+    int px = best.left + (int) (best.width() * fracX);
     int py = (best.top + best.bottom) / 2;
     boolean ok = tapRatio((float) px / w, (float) py / h);
     log(what + "（" + px + "," + py + "）手势=" + ok);
