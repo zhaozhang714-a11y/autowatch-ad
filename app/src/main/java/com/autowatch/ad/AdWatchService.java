@@ -167,6 +167,10 @@ public class AdWatchService extends AccessibilityService {
             return;
         }
         AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (dismissSystemDialog()) {
+            scheduleNext(1200L);
+            return;
+        }
         if (root == null) {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
@@ -176,6 +180,89 @@ public class AdWatchService extends AccessibilityService {
             return;
         }
         step(root);
+    }
+
+    private boolean dismissSystemDialog() {
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> wins = getWindows();
+            if (wins == null) {
+                return false;
+            }
+            for (int i = 0; i < wins.size(); i++) {
+                android.view.accessibility.AccessibilityWindowInfo win = wins.get(i);
+                if (win == null) {
+                    continue;
+                }
+                AccessibilityNodeInfo wr = win.getRoot();
+                if (wr == null) {
+                    continue;
+                }
+                CharSequence pk = wr.getPackageName();
+                String p = pk == null ? "" : pk.toString();
+                if (Config.TARGET_PACKAGE.equals(p)) {
+                    continue;
+                }
+                StringBuilder sb = new StringBuilder();
+                collectNodeText(wr, 4, sb);
+                String shallow = sb.toString();
+                if (!shallow.contains("想要打开") && !shallow.contains("仅打开一次")
+                        && !shallow.contains("始终打开")) {
+                    continue;
+                }
+                AccessibilityNodeInfo cancel = findNodeText(wr, "取消", 8);
+                if (cancel == null) {
+                    continue;
+                }
+                if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < 2000L) {
+                    return true;
+                }
+                android.graphics.Rect b = new android.graphics.Rect();
+                cancel.getBoundsInScreen(b);
+                int wpx = getResources().getDisplayMetrics().widthPixels;
+                int hpx = getResources().getDisplayMetrics().heightPixels;
+                boolean ok = tapRatio((b.left + b.right) / 2f / wpx, (b.top + b.bottom) / 2f / hpx);
+                log("广告要跳到别的应用，点系统弹窗的「取消」手势=" + ok);
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private void collectNodeText(AccessibilityNodeInfo n, int depth, StringBuilder sb) {
+        if (n == null || depth < 0) {
+            return;
+        }
+        CharSequence t = n.getText();
+        if (t != null) {
+            sb.append(t).append('|');
+        }
+        CharSequence d = n.getContentDescription();
+        if (d != null) {
+            sb.append(d).append('|');
+        }
+        int c = n.getChildCount();
+        for (int i = 0; i < c; i++) {
+            collectNodeText(n.getChild(i), depth - 1, sb);
+        }
+    }
+
+    private AccessibilityNodeInfo findNodeText(AccessibilityNodeInfo n, String key, int depth) {
+        if (n == null || depth < 0) {
+            return null;
+        }
+        CharSequence t = n.getText();
+        if (t != null && t.toString().contains(key)) {
+            return n;
+        }
+        int c = n.getChildCount();
+        for (int i = 0; i < c; i++) {
+            AccessibilityNodeInfo r = findNodeText(n.getChild(i), key, depth - 1);
+            if (r != null) {
+                return r;
+            }
+        }
+        return null;
     }
 
     private void step(AccessibilityNodeInfo root) {
@@ -397,7 +484,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v37：识别绿色按钮再点）");
+        log("广告页已出现，开始认字（v38：拦系统跳转弹窗）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -626,16 +713,8 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
     }
     mIdleOcrMiss += 1;
     int miss = mIdleOcrMiss;
-    if (miss == 2 || miss == 5 || miss == 8) {
-        float x = (mEntryAlt % 2 == 0) ? ENTRY_X : 0.767f;
-        float y = (mEntryAlt % 2 == 0) ? ENTRY_Y : 0.807f;
-        mEntryAlt += 1;
-        boolean ok = tapRatio(x, y);
-        log("没认出按钮，按备用坐标点（" + ((int) (x * 100)) + "%,"
-                + ((int) (y * 100)) + "%）手势=" + ok);
-        if (ok) {
-            enterState(WAIT_ENTRY);
-        }
+    if (miss == 3 || miss == 9) {
+        log("这还是认不出「免费听」，不乱点屏幕，再等一轮");
     }
 }
 
