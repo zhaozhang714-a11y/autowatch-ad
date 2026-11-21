@@ -145,6 +145,7 @@ public class AdWatchService extends AccessibilityService {
             mNewAdCount = 0;
             mGreenTaps = 0;
             mShotIdleLog = 0;
+            mLastCountdownAt = 0L;
         }
     }
 
@@ -226,7 +227,7 @@ public class AdWatchService extends AccessibilityService {
             }
         }
         AccessibilityNodeInfo entry = findClickable(root, Config.ENTRY_KEYWORDS);
-        if (entry != null && clickNode(entry)) {
+        if (entry != null && lookLikeEntry(entry) && clickNode(entry)) {
             log("点击入口按钮 " + brief(entry));
             enterState(WAIT_ENTRY);
             scheduleNext(Config.POLL_INTERVAL_MS);
@@ -243,6 +244,27 @@ public class AdWatchService extends AccessibilityService {
             }
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
+    }
+
+    private boolean lookLikeEntry(AccessibilityNodeInfo n) {
+        try {
+            android.graphics.Rect r = new android.graphics.Rect();
+            n.getBoundsInScreen(r);
+            int h = getResources().getDisplayMetrics().heightPixels;
+            float cy = (r.top + r.bottom) * 0.5f / h;
+            int w = r.right - r.left;
+            if (cy < 0.50f || cy > 0.64f) {
+                log("这个按钮位置不对（中心 y=" + ((int) (cy * 100)) + "%），改用坐标点");
+                return false;
+            }
+            if (w > 460) {
+                log("这个按钮太宽（" + w + "px），改用坐标点");
+                return false;
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private void runWaitEntry(AccessibilityNodeInfo root) {
@@ -314,7 +336,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v26：倒计时优先）");
+        log("广告页已出现，开始认字（v27：认字修正版）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -413,6 +435,7 @@ private com.google.mlkit.vision.text.TextRecognizer mOcr = null;
 private boolean mOcrBusy = false;
 private boolean mOcrFailed = false;
 private long mOcrLogAt = 0L;
+private long mLastCountdownAt = 0L;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -482,9 +505,27 @@ private void actByText(String s) {
     }
     boolean countdown = s.contains("秒后可领取") || s.contains("秒后领取") || s.contains("后可领取");
     boolean paused = s.contains("继续观看") || s.contains("继续解锁") || s.contains("坚持退出");
-    boolean claim = !countdown && (s.contains("领取奖励") || s.contains("领取成功"));
-    boolean landing = s.contains("版本号") || s.contains("开发者：") || s.contains("隐私政策") || s.contains("举报");
+    boolean finished = s.contains("领取成功");
+    boolean claim = !countdown && (finished || s.contains("领取奖励"));
+    int marks = 0;
+    if (s.contains("版本号")) {
+        marks += 1;
+    }
+    if (s.contains("开发者")) {
+        marks += 1;
+    }
+    if (s.contains("隐私")) {
+        marks += 1;
+    }
+    if (s.contains("举报")) {
+        marks += 1;
+    }
+    if (s.contains("权限")) {
+        marks += 1;
+    }
+    boolean landing = marks >= 2 && !countdown;
     boolean quiet = System.currentTimeMillis() - mOcrLogAt < 6000L;
+    long sinceCountdown = System.currentTimeMillis() - mLastCountdownAt;
 
     if (paused) {
         if (mGreenTaps >= 6) {
@@ -500,6 +541,7 @@ private void actByText(String s) {
     }
 
     if (countdown) {
+        mLastCountdownAt = System.currentTimeMillis();
         mGreenTaps = 0;
         mCloseSteps = 0;
         if (el < AD_MIN_WATCH_MS + 100000L) {
@@ -513,12 +555,12 @@ private void actByText(String s) {
         return;
     }
 
-    if (claim && el >= 35000L) {
+    if (claim && el >= 45000L && sinceCountdown > 12000L) {
         mGreenTaps = 0;
         if (mCloseSteps < 3) {
             mCloseSteps += 1;
             boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-            log("广告播完了，识别到「领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
+            log("广告播完了，识别到「领取成功/领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
             return;
         }
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
@@ -526,7 +568,7 @@ private void actByText(String s) {
         return;
     }
 
-    if (landing) {
+    if (landing && el >= 35000L && sinceCountdown > 6000L) {
         mGreenTaps = 0;
         int step = (mCloseSteps % 2) + 1;
         mCloseSteps = mCloseSteps + 1;
