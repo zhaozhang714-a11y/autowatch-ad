@@ -41,7 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
-    private static final int MAX_CLOSE_STEPS = 5;
+    private static final int MAX_CLOSE_STEPS = 3;
 
     private static AdWatchService sInstance;
     private static String sLastDump = "尚未采集";
