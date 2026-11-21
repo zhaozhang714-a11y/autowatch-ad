@@ -12,6 +12,8 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
@@ -19,24 +21,26 @@ import android.widget.Toast;
 public class AdWatchService extends AccessibilityService {
 
     static final int IDLE = 0;
-    static final int SCAN_ENTRY = 1;
-    static final int WAIT_AD = 2;
-    static final int CLAIM = 3;
-    static final int CLOSE = 4;
+    static final int WAIT_ENTRY = 1;
+    static final int CLOSE_AD = 2;
 
     private static final String CHANNEL_ID = "autowatch_ad_status";
     private static final String[] EXIT_HINTS = {"领取成功", "跳过广告", "跳过", "关闭广告", "稍后再说"};
-    private static final String[] AD_START_HINTS = {"看视频", "立即观看", "点击观看", "观看广告", "继续观看"};
-    private static final int MAX_CLOSE_ATTEMPTS = 3;
+    private static final String[] DIALOG_HINTS = {"领取奖励", "坚持退出", "提前得", "确认领取"};
+    private static final String[] AD_PAGE_HINTS = {"开发者", "应用名称", "隐私政策", "应用权限"};
+    private static final float ENTRY_X = 0.706f;
+    private static final float ENTRY_Y = 0.597f;
+    private static final float CLAIM_X = 0.50f;
+    private static final float CLAIM_Y = 0.391f;
+    private static final float CLOSE_X = 0.825f;
+    private static final float CLOSE_Y = 0.055f;
     private static final long CLOSE_RETRY_MS = 1200L;
-    private static final float ENTRY_FALLBACK_X = 0.75f;
-    private static final float ENTRY_FALLBACK_Y = 0.80f;
-    private static final int FALLBACK_AFTER_ROUNDS = 3;
-    private static final long FALLBACK_COOLDOWN_MS = 40000L;
+    private static final int MAX_CLOSE_STEPS = 6;
 
     private static AdWatchService sInstance;
     private static String sLastDump = "尚未采集";
     private static long sLastDumpAt = 0L;
+    private static String sLog = "";
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mPollRunnable = new Runnable() {
@@ -49,15 +53,29 @@ public class AdWatchService extends AccessibilityService {
     private Prefs mPrefs;
     private int mState = IDLE;
     private int mIdleRounds = 0;
-    private int mClaimStep = 0;
+    private int mCloseSteps = 0;
     private long mStateEnteredAt = 0L;
     private long mRunStartedAt = 0L;
-    private long mLastFallbackAt = 0L;
+    private long mPauseUntil = 0L;
+    private boolean mAdSeen = false;
     private boolean mStopping = false;
-    private int mCloseAttempts = 0;
 
     static String getLastDump() {
         return sLastDump;
+    }
+
+    static String getLog() {
+        return sLog.isEmpty() ? "暂无动作记录" : sLog;
+    }
+
+    private static void log(String msg) {
+        String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA)
+                .format(new java.util.Date());
+        String line = stamp + " " + msg;
+        sLog = line + "\n" + sLog;
+        if (sLog.length() > 1500) {
+            sLog = sLog.substring(0, 1500);
+        }
     }
 
     @Override
@@ -67,6 +85,7 @@ public class AdWatchService extends AccessibilityService {
         mPrefs = new Prefs(getApplicationContext());
         mPrefs.ensureFirstRun();
         mRunStartedAt = System.currentTimeMillis();
+        log("服务已连接");
         enterState(IDLE);
         scheduleNext(0L);
     }
@@ -85,11 +104,7 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (mState == IDLE) {
-            runIdleRound(root);
-        } else {
-            dispatchState(root);
-        }
+        step(root);
     }
 
     @Override
@@ -106,11 +121,8 @@ public class AdWatchService extends AccessibilityService {
     private void enterState(int state) {
         mState = state;
         mStateEnteredAt = System.currentTimeMillis();
-        if (state == CLAIM) {
-            mClaimStep = 1;
-        }
-        if (state == CLOSE) {
-            mCloseAttempts = 0;
+        if (state == CLOSE_AD) {
+            mCloseSteps = 0;
         }
     }
 
@@ -136,10 +148,16 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (mState == IDLE) {
-            runIdleRound(root);
+        step(root);
+    }
+
+    private void step(AccessibilityNodeInfo root) {
+        if (mState == WAIT_ENTRY) {
+            runWaitEntry(root);
+        } else if (mState == CLOSE_AD) {
+            runCloseAd(root);
         } else {
-            dispatchState(root);
+            runIdle(root);
         }
     }
 
@@ -147,45 +165,43 @@ public class AdWatchService extends AccessibilityService {
         return Config.TARGET_PACKAGE.equals(String.valueOf(root.getPackageName()));
     }
 
-    private void dispatchState(AccessibilityNodeInfo root) {
-        switch (mState) {
-            case SCAN_ENTRY:
-                runScanEntry(root);
-                break;
-            case WAIT_AD:
-                runWaitAd(root);
-                break;
-            case CLAIM:
-                runClaim(root);
-                break;
-            case CLOSE:
-                runClose(root);
-                break;
-            default:
-                runIdleRound(root);
-                break;
+    private void runIdle(AccessibilityNodeInfo root) {
+        long now = System.currentTimeMillis();
+        if (now < mPauseUntil) {
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
         }
-    }
-
-    private void runIdleRound(AccessibilityNodeInfo root) {
-        if (findClickable(root, Config.ENTRY_KEYWORDS) != null) {
-            mIdleRounds = 0;
-            enterState(SCAN_ENTRY);
-            scheduleNext(0L);
+        mAdSeen = false;
+        collectDump(root);
+        if (isAdPage(root)) {
+            log("当前就是广告页，开始关闭");
+            mAdSeen = true;
+            enterState(CLOSE_AD);
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
+        if (dialogVisible(root)) {
+            if (tapClaim(root)) {
+                log("发现领取奖励弹窗，已点击");
+                mAdSeen = true;
+                enterState(CLOSE_AD);
+                scheduleNext(Config.POLL_INTERVAL_MS);
+                return;
+            }
+        }
+        AccessibilityNodeInfo entry = findClickable(root, Config.ENTRY_KEYWORDS);
+        if (entry != null && clickNode(entry)) {
+            log("点击入口按钮 " + brief(entry));
+            enterState(WAIT_ENTRY);
+            scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
         mIdleRounds += 1;
-        if (System.currentTimeMillis() - sLastDumpAt > 2000L) {
-            sLastDump = describeTree(root);
-            sLastDumpAt = System.currentTimeMillis();
-        }
-        if (mIdleRounds >= FALLBACK_AFTER_ROUNDS
-                && System.currentTimeMillis() - mLastFallbackAt > FALLBACK_COOLDOWN_MS) {
-            mLastFallbackAt = System.currentTimeMillis();
+        if (mIdleRounds >= 2) {
             mIdleRounds = 0;
-            if (tapRatio(ENTRY_FALLBACK_X, ENTRY_FALLBACK_Y)) {
-                sLastDump = "已按坐标兜底点击免费听1天按钮\n" + sLastDump;
-                enterState(WAIT_AD);
+            if (tapRatio(ENTRY_X, ENTRY_Y)) {
+                log("节点没找到，按坐标点免费听按钮");
+                enterState(WAIT_ENTRY);
                 scheduleNext(Config.POLL_INTERVAL_MS);
                 return;
             }
@@ -193,81 +209,82 @@ public class AdWatchService extends AccessibilityService {
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
 
-    private void runScanEntry(AccessibilityNodeInfo root) {
-        AccessibilityNodeInfo entry = findClickable(root, Config.ENTRY_KEYWORDS);
-        if (entry != null && clickNode(entry)) {
-            enterState(WAIT_AD);
+    private void runWaitEntry(AccessibilityNodeInfo root) {
+        long elapsed = elapsedInState();
+        if (dialogVisible(root)) {
+            if (tapClaim(root)) {
+                log("弹出领取奖励，已点击");
+                mAdSeen = true;
+                enterState(CLOSE_AD);
+                scheduleNext(Config.POLL_INTERVAL_MS);
+                return;
+            }
+        }
+        if (isAdPage(root) && elapsed >= 2500L) {
+            log("广告页已出现");
+            mAdSeen = true;
+            enterState(CLOSE_AD);
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (elapsedInState() >= Config.ENTRY_WAIT_MS) {
+        if (elapsed >= 6000L) {
+            log("等了 6 秒没进广告页，重新尝试");
+            mPauseUntil = System.currentTimeMillis() + 2000L;
             enterState(IDLE);
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
 
-    private void runWaitAd(AccessibilityNodeInfo root) {
-        if (findClickable(root, Config.CLAIM_SUCCESS_KEYWORDS) != null) {
-            enterState(CLAIM);
-            scheduleNext(0L);
-            return;
-        }
-        AccessibilityNodeInfo start = findClickable(root, AD_START_HINTS);
-        if (start != null && clickNode(start)) {
-            mStateEnteredAt = System.currentTimeMillis();
+    private void runCloseAd(AccessibilityNodeInfo root) {
+        if (!isAdPage(root) && !dialogVisible(root)) {
+            log("已回到歌曲页，本轮结束");
+            if (mAdSeen) {
+                finishClaim();
+            }
+            mPauseUntil = System.currentTimeMillis() + 3000L;
+            enterState(IDLE);
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (elapsedInState() >= Config.AD_WAIT_MS) {
-            enterState(IDLE);
-        }
-        scheduleNext(Config.POLL_INTERVAL_MS);
-    }
-
-    private void runClaim(AccessibilityNodeInfo root) {
-        if (mClaimStep == 1) {
-            AccessibilityNodeInfo success = findClickable(root, Config.CLAIM_SUCCESS_KEYWORDS);
-            if (success != null && clickNode(success)) {
-                mClaimStep = 2;
+        if (dialogVisible(root)) {
+            if (tapClaim(root)) {
+                log("先点领取奖励再关闭");
                 mStateEnteredAt = System.currentTimeMillis();
-            }
-        } else {
-            AccessibilityNodeInfo reward = findClickable(root, Config.CLAIM_REWARD_KEYWORDS);
-            if (reward != null && clickNode(reward)) {
-                enterState(CLOSE);
                 scheduleNext(Config.POLL_INTERVAL_MS);
                 return;
             }
         }
-        long timeout = mClaimStep == 1 ? Config.CLAIM1_WAIT_MS : Config.CLAIM2_WAIT_MS;
-        if (elapsedInState() >= timeout) {
-            enterState(CLOSE);
+        if (elapsedInState() < CLOSE_RETRY_MS) {
+            scheduleNext(200L);
+            return;
         }
-        scheduleNext(Config.POLL_INTERVAL_MS);
-    }
-
-    private void runClose(AccessibilityNodeInfo root) {
+        mStateEnteredAt = System.currentTimeMillis();
+        mCloseSteps += 1;
+        if (mCloseSteps > MAX_CLOSE_STEPS) {
+            log("关闭多次失败，按返回键");
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            mPauseUntil = System.currentTimeMillis() + 3000L;
+            enterState(IDLE);
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
         AccessibilityNodeInfo close = findClickable(root, Config.CLOSE_KEYWORDS);
         if (close == null) {
             close = findClickable(root, EXIT_HINTS);
         }
         if (close != null && clickNode(close)) {
-            mCloseAttempts += 1;
+            log("点击关闭节点 " + brief(close));
+        } else if (tapRatio(CLOSE_X, CLOSE_Y)) {
+            log("按坐标点右上角关闭 第" + mCloseSteps + "次");
         } else {
             performGlobalAction(GLOBAL_ACTION_BACK);
-            mCloseAttempts += 1;
-        }
-        if (mCloseAttempts >= MAX_CLOSE_ATTEMPTS || elapsedInState() >= CLOSE_RETRY_MS * MAX_CLOSE_ATTEMPTS) {
-            finishClaim();
-            enterState(IDLE);
-            scheduleNext(Config.POLL_INTERVAL_MS);
-            return;
         }
         scheduleNext(CLOSE_RETRY_MS);
     }
 
     private void finishClaim() {
         mPrefs.incrementCount();
+        log("本轮领取完成，累计 " + mPrefs.getCount() + " 次");
         if (System.currentTimeMillis() - mPrefs.getFirstRunMs() >= Config.THIRTY_DAYS_MS) {
             mStopping = true;
             mHandler.removeCallbacks(mPollRunnable);
@@ -280,15 +297,56 @@ public class AdWatchService extends AccessibilityService {
         long total = System.currentTimeMillis() - mRunStartedAt;
         long budget = Math.max(Config.THIRTY_DAYS_MS, Config.ENTRY_WAIT_MS + Config.AD_WAIT_MS
                 + Config.CLAIM1_WAIT_MS + Config.CLAIM2_WAIT_MS);
-        if (total >= budget || (mState != IDLE && elapsedInState() > Config.ENTRY_WAIT_MS)) {
-            enterState(IDLE);
-            mIdleRounds = 0;
-            scheduleNext(Config.POLL_INTERVAL_MS);
+        if (total >= budget) {
+            mStopping = true;
+            mHandler.removeCallbacks(mPollRunnable);
+            stopSelf();
         }
     }
 
     private long elapsedInState() {
         return System.currentTimeMillis() - mStateEnteredAt;
+    }
+
+    private boolean tapClaim(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo reward = findClickable(root, DIALOG_HINTS);
+        if (reward != null && clickNode(reward)) {
+            return true;
+        }
+        AccessibilityNodeInfo reward2 = findClickable(root, Config.CLAIM_REWARD_KEYWORDS);
+        if (reward2 != null && clickNode(reward2)) {
+            return true;
+        }
+        return tapRatio(CLAIM_X, CLAIM_Y);
+    }
+
+    private boolean isAdPage(AccessibilityNodeInfo root) {
+        return hasAnyText(root, AD_PAGE_HINTS, 0);
+    }
+
+    private boolean dialogVisible(AccessibilityNodeInfo root) {
+        return hasAnyText(root, DIALOG_HINTS, 0);
+    }
+
+    private boolean hasAnyText(AccessibilityNodeInfo node, String[] keywords, int depth) {
+        if (node == null || keywords == null || depth > 14) {
+            return false;
+        }
+        String text = textOf(node.getText());
+        String desc = textOf(node.getContentDescription());
+        for (String keyword : keywords) {
+            if (keyword != null && !keyword.isEmpty()
+                    && (text.contains(keyword) || desc.contains(keyword))) {
+                return true;
+            }
+        }
+        int count = node.getChildCount();
+        for (int i = 0; i < count; i += 1) {
+            if (hasAnyText(node.getChild(i), keywords, depth + 1)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private AccessibilityNodeInfo findClickable(AccessibilityNodeInfo root, String[] keywords) {
@@ -320,7 +378,7 @@ public class AdWatchService extends AccessibilityService {
     private AccessibilityNodeInfo nearestClickable(AccessibilityNodeInfo node) {
         AccessibilityNodeInfo current = node;
         int hops = 0;
-        while (current != null && hops <= 5) {
+        while (current != null && hops <= 6) {
             if (current.isClickable()) {
                 return current;
             }
@@ -349,19 +407,12 @@ public class AdWatchService extends AccessibilityService {
         if (node == null) {
             return false;
         }
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
         if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return true;
         }
-        return tapCenter(node);
-    }
-
-    private boolean tapCenter(AccessibilityNodeInfo node) {
-        Rect rect = new Rect();
-        node.getBoundsInScreen(rect);
         if (rect.width() <= 0 || rect.height() <= 0) {
-            return false;
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return false;
         }
         return tapPoint(rect.centerX(), rect.centerY());
@@ -371,9 +422,33 @@ public class AdWatchService extends AccessibilityService {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return false;
         }
-        int width = getResources().getDisplayMetrics().widthPixels;
-        int height = getResources().getDisplayMetrics().heightPixels;
+        int width = screenWidth();
+        int height = screenHeight();
         return tapPoint(Math.round(width * xRatio), Math.round(height * yRatio));
+    }
+
+    private int screenWidth() {
+        DisplayMetrics dm = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (wm != null) {
+            wm.getDefaultDisplay().getRealMetrics(dm);
+        }
+        if (dm.widthPixels <= 0) {
+            dm = getResources().getDisplayMetrics();
+        }
+        return dm.widthPixels;
+    }
+
+    private int screenHeight() {
+        DisplayMetrics dm = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (wm != null) {
+            wm.getDefaultDisplay().getRealMetrics(dm);
+        }
+        if (dm.heightPixels <= 0) {
+            dm = getResources().getDisplayMetrics();
+        }
+        return dm.heightPixels;
     }
 
     private boolean tapPoint(int x, int y) {
@@ -383,27 +458,37 @@ public class AdWatchService extends AccessibilityService {
         Path path = new Path();
         path.moveTo(x, y);
         GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0L, 80L);
+                new GestureDescription.StrokeDescription(path, 0L, 60L);
         GestureDescription description = new GestureDescription.Builder()
                 .addStroke(stroke)
                 .build();
         return dispatchGesture(description, null, null);
     }
 
-    private String describeTree(AccessibilityNodeInfo root) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("pkg=").append(textOf(root.getPackageName())).append("\n");
-        sb.append("size=").append(getResources().getDisplayMetrics().widthPixels)
-                .append("x").append(getResources().getDisplayMetrics().heightPixels).append("\n");
-        collect(root, sb, 0);
-        if (sb.length() <= 0) {
-            return "空节点树";
+    private String brief(AccessibilityNodeInfo node) {
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+        String text = textOf(node.getText());
+        if (text.isEmpty()) {
+            text = textOf(node.getContentDescription());
         }
-        return sb.toString();
+        return "[" + text + " " + rect.left + "," + rect.top + "," + rect.right + "," + rect.bottom + "]";
+    }
+
+    private void collectDump(AccessibilityNodeInfo root) {
+        if (System.currentTimeMillis() - sLastDumpAt < 1500L) {
+            return;
+        }
+        sLastDumpAt = System.currentTimeMillis();
+        StringBuilder sb = new StringBuilder();
+        sb.append("pkg=").append(textOf(root.getPackageName()))
+                .append(" screen=").append(screenWidth()).append("x").append(screenHeight()).append("\n");
+        collect(root, sb, 0);
+        sLastDump = sb.length() == 0 ? "空节点树" : sb.toString();
     }
 
     private void collect(AccessibilityNodeInfo node, StringBuilder sb, int depth) {
-        if (node == null || sb.length() > 5000 || depth > 20) {
+        if (node == null || sb.length() > 12000 || depth > 22) {
             return;
         }
         String text = textOf(node.getText());
