@@ -475,11 +475,14 @@ private void actByLook(int kind) {
 private int analyzeShot(android.graphics.Bitmap bmp) {
     int w = bmp.getWidth();
     int h = bmp.getHeight();
-    if (isRedPixel(bmp.getPixel(Math.round(w * 0.395f), Math.round(h * 0.0726f))) || isRedPixel(bmp.getPixel(Math.round(w * 0.455f), Math.round(h * 0.0726f))) {
+    boolean liveA = isRedPixel(bmp.getPixel(Math.round(w * 0.395f), Math.round(h * 0.0726f)));
+    boolean liveB = isRedPixel(bmp.getPixel(Math.round(w * 0.455f), Math.round(h * 0.0726f)));
+    if (liveA || liveB) {
         return 3;
     }
-    if (isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f)))
-            && isRedPixel(bmp.getPixel(Math.round(w * 0.86f), Math.round(h * 0.177f))) {
+    boolean lpA = isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f)));
+    boolean lpB = isRedPixel(bmp.getPixel(Math.round(w * 0.86f), Math.round(h * 0.177f)));
+    if (lpA && lpB) {
         return 2;
     }
     int y = Math.round(h * CLAIM_Y);
