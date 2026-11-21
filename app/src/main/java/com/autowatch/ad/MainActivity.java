@@ -1,17 +1,24 @@
 package com.autowatch.ad;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.accessibility.AccessibilityManager;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** 启动引导页：检查无障碍权限、显示剩余天数、拉起目标 App 一次。 */
+import java.util.List;
+
 public class MainActivity extends Activity {
 
     private static final String ACCESSIBILITY_SERVICE_CLASS = "com.autowatch.ad.AdWatchService";
@@ -36,7 +43,7 @@ public class MainActivity extends Activity {
         Button startButton = findViewById(R.id.btnStart);
 
         refreshAccessibilityStatus();
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天");
+        refreshDiagnostics();
 
         openAccessibilityButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -57,9 +64,33 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshAccessibilityStatus();
+        refreshDiagnostics();
     }
 
-    /** 读 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES 判断本服务是否开启。 */
+    private boolean isServiceRegistered() {
+        AccessibilityManager am = (AccessibilityManager) getSystemService(Context.ACCESSIBILITY_SERVICE);
+        if (am == null) {
+            return false;
+        }
+        List<AccessibilityServiceInfo> list = am.getInstalledAccessibilityServiceList();
+        if (list == null) {
+            return false;
+        }
+        for (AccessibilityServiceInfo info : list) {
+            ResolveInfo ri = info.getResolveInfo();
+            if (ri == null || ri.serviceInfo == null) {
+                continue;
+            }
+            String pkg = ri.serviceInfo.packageName;
+            String name = ri.serviceInfo.name;
+            if (getPackageName().equals(pkg) && name != null
+                    && (ACCESSIBILITY_SERVICE_CLASS.equals(name) || name.endsWith("AdWatchService"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isAccessibilityServiceEnabled() {
         String enabled = Settings.Secure.getString(getContentResolver(),
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
@@ -85,14 +116,34 @@ public class MainActivity extends Activity {
                 : "无障碍服务未开启，请先开启");
     }
 
-    /** 未开启时跳系统无障碍设置页。 */
+    private void refreshDiagnostics() {
+        if (remainingDaysText == null) {
+            return;
+        }
+        String registered = isServiceRegistered() ? "已注册" : "未注册";
+        String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv2 · 系统识别：" + registered + " · 服务：" + enabled);
+    }
+
     private void openAccessibilitySettings() {
+        boolean registered = isServiceRegistered();
+        if (registered && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                Intent detail = new Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                detail.putExtra(Intent.EXTRA_COMPONENT_NAME,
+                        new ComponentName(this, AdWatchService.class).flattenToString());
+                detail.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(detail);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        Toast.makeText(this, registered ? "打开无障碍设置" : "系统未注册本服务，已打开无障碍总列表", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
     }
 
-    /** 读 Prefs.firstRunMs 与 Config.THIRTY_DAYS_MS 计算剩余天数，向上取整。 */
     private long remainingDays() {
         long firstRunMs = prefs.getFirstRunMs();
         if (firstRunMs <= 0L) {
@@ -106,7 +157,6 @@ public class MainActivity extends Activity {
         return (remainMs + ONE_DAY_MS - 1L) / ONE_DAY_MS;
     }
 
-    /** 无障碍服务无法自行启动 App；这里只用 PackageManager 拉起目标包一次。 */
     private void launchTargetAppOnce() {
         if (targetLaunched) {
             return;
