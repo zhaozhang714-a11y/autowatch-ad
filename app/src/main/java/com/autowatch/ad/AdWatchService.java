@@ -72,6 +72,7 @@ public class AdWatchService extends AccessibilityService {
     private int mResetCount = 0;
     private boolean mGesturePending = false;
     private long mLastGestureAt = 0L;
+    private long mClaimTappedAt = 0L;
 
     static String getLastDump() {
         return sLastDump;
@@ -134,6 +135,7 @@ public class AdWatchService extends AccessibilityService {
         mStateEnteredAt = System.currentTimeMillis();
         if (state == CLOSE_AD) {
             mCloseSteps = 0;
+            mClaimTappedAt = 0L;
         }
     }
 
@@ -284,6 +286,18 @@ public class AdWatchService extends AccessibilityService {
                 return;
             }
         }
+        if (mClaimTappedAt > 0L && System.currentTimeMillis() - mClaimTappedAt > 2500L) {
+            boolean stillDone = hasAnyText(root, EXIT_HINTS, 0);
+            mClaimTappedAt = 0L;
+            if (!stillDone) {
+                mStateEnteredAt = System.currentTimeMillis();
+                mCloseSteps = 1;
+                log("又开了一条新广告，重新计时 45 秒");
+                scheduleNext(800L);
+                return;
+            }
+        }
+        boolean adDone = hasAnyText(root, EXIT_HINTS, 0);
         if (elapsedInState() < AD_MIN_WATCH_MS) {
             if (mCloseSteps == 0) {
                 mCloseSteps = 1;
@@ -292,27 +306,41 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(800L);
             return;
         }
+        if (!adDone && elapsedInState() < AD_MIN_WATCH_MS + 12000L) {
+            if (mCloseSteps <= 1) {
+                log("页头还没变成「领取成功」，再等一会儿");
+            }
+            scheduleNext(1000L);
+            return;
+        }
         if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
             scheduleNext(1000L);
             return;
         }
         mCloseSteps += 1;
         if (mCloseSteps == 2) {
-            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("广告播完，点右上角关闭 手势=" + ok);
+            if (adDone) {
+                boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+                log("点中间绿色「领取奖励」手势=" + ok);
+                mClaimTappedAt = System.currentTimeMillis();
+            } else {
+                boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+                log("没看到「领取成功」，先点右上角关闭 手势=" + ok);
+            }
         } else if (mCloseSteps == 3) {
             boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("再点一次右上角关闭 手势=" + ok);
+            log("点右上角关闭 手势=" + ok);
         } else if (mCloseSteps == 4) {
+            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+            log("再点一次右上角关闭 手势=" + ok);
+        } else if (mCloseSteps == 5) {
             boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
             log("长按右上角关闭 手势=" + ok);
-        } else if (mCloseSteps == 5) {
-            boolean ok = tapRatio(0.78f, 0.0703f);
-            log("点「领取成功」整颗按钮 手势=" + ok);
         } else {
             log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
             mAdSeen = false;
             mCloseSteps = 0;
+            mClaimTappedAt = 0L;
             mPauseUntil = System.currentTimeMillis() + 8000L;
             enterState(IDLE);
             launchTargetClear();
