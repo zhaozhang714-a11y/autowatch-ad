@@ -486,7 +486,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v39：页头领取成功立刻点）");
+        log("广告页已出现，开始认字（v40：奖励弹窗按绿按钮实际位置点）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -776,8 +776,15 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         int w = getResources().getDisplayMetrics().widthPixels;
         int h = getResources().getDisplayMetrics().heightPixels;
         if (mRewardDialogs >= 2) {
-            log("这个奖励弹窗已经点过 " + mRewardDialogs + " 次还没消失，改成关广告页");
-            closeLadder();
+            boolean esc = tapLineOnFrac(result, new String[]{"坚持退出", "退出"},
+                    new String[]{"继续", "秒"},
+                    0.55f, 0.70f, 0.5f, "奖励弹窗还没消失，点它自己的「坚持退出」退出去");
+            if (esc) {
+                mRewardDialogs = 0;
+                log("已经用「坚持退出」退出奖励弹窗");
+                return;
+            }
+            log("这个奖励弹窗点了 2 次还在，也没认出「坚持退出」，先不动");
             return;
         }
         boolean ok = false;
@@ -786,9 +793,9 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
             log("弹窗绿色按钮认出来了（" + mPillCx + "," + mPillCy + "），点「领取奖励」手势=" + ok);
         }
         if (!ok) {
-            ok = tapLineOn(result, new String[]{"领取奖励", "立即领取"},
+            ok = tapLineOnFrac(result, new String[]{"领取奖励"},
                     new String[]{"秒", "金币", "待领取", "提现", "我的", "坚持"},
-                    0.30f, 0.95f, "看到「第N日免费听」奖励弹窗，点绿色「领取奖励」");
+                    0.42f, 0.63f, 0.5f, "看到「第N日免费听」奖励弹窗，点绿色「领取奖励」");
         }
         if (ok) {
             mCloseSteps = 0;
@@ -926,9 +933,20 @@ private void scanGreenPill(android.graphics.Bitmap bmp) {
     if (bmp == null) {
         return;
     }
+    android.graphics.Bitmap soft = bmp;
     try {
-        int w = bmp.getWidth();
-        int h = bmp.getHeight();
+        if (bmp.getConfig() != android.graphics.Bitmap.Config.ARGB_8888) {
+            soft = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
+            if (soft == null) {
+                soft = bmp;
+            }
+        }
+    } catch (Throwable ignored) {
+        soft = bmp;
+    }
+    try {
+        int w = soft.getWidth();
+        int h = soft.getHeight();
         int top = -1;
         int bottom = -1;
         int xLeft = w;
@@ -938,7 +956,7 @@ private void scanGreenPill(android.graphics.Bitmap bmp) {
             int last = -1;
             int cnt = 0;
             for (int x = (int) (w * 0.12f); x < (int) (w * 0.90f); x += 6) {
-                int c = bmp.getPixel(x, y);
+                int c = soft.getPixel(x, y);
                 int r = (c >> 16) & 0xff;
                 int g = (c >> 8) & 0xff;
                 int b = c & 0xff;
