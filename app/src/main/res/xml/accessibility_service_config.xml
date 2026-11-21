@@ -3,5 +3,7 @@
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
     android:packageNames="com.luna.music"
     android:description="@string/accessibility_service_description" />
