@@ -226,9 +226,9 @@ public class AdWatchService extends AccessibilityService {
                 return;
             }
         }
-        AccessibilityNodeInfo entry = findClickable(root, Config.ENTRY_KEYWORDS);
-        if (entry != null && lookLikeEntry(entry) && clickNode(entry)) {
-            log("点击入口按钮 " + brief(entry));
+        AccessibilityNodeInfo entry = findEntryNode(root);
+        if (entry != null && clickNode(entry)) {
+            log("按文字找到「免费听」按钮，点击它 " + brief(entry));
             enterState(WAIT_ENTRY);
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
@@ -252,6 +252,41 @@ public class AdWatchService extends AccessibilityService {
             }
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
+    }
+
+    private AccessibilityNodeInfo findEntryNode(AccessibilityNodeInfo root) {
+        int w = getResources().getDisplayMetrics().widthPixels;
+        int h = getResources().getDisplayMetrics().heightPixels;
+        java.util.ArrayDeque<AccessibilityNodeInfo> queue = new java.util.ArrayDeque<AccessibilityNodeInfo>();
+        queue.add(root);
+        int guard = 0;
+        while (!queue.isEmpty() && guard < 400) {
+            AccessibilityNodeInfo n = queue.poll();
+            guard += 1;
+            if (n == null) {
+                continue;
+            }
+            CharSequence text = n.getText();
+            CharSequence desc = n.getContentDescription();
+            String s = (text == null ? "" : text.toString()) + "|" + (desc == null ? "" : desc.toString());
+            if (s.contains("免费听") && !s.contains("提前") && !s.contains("再看")) {
+                android.graphics.Rect r = new android.graphics.Rect();
+                n.getBoundsInScreen(r);
+                float cy = (r.top + r.bottom) * 0.5f / h;
+                float cx = (r.left + r.right) * 0.5f / w;
+                if (cx > 0.5f && cy >= 0.35f && cy <= 0.88f && (r.right - r.left) < 520) {
+                    AccessibilityNodeInfo clickable = nearestClickable(n);
+                    return clickable != null ? clickable : n;
+                }
+            }
+            for (int i = 0; i < n.getChildCount(); i += 1) {
+                AccessibilityNodeInfo child = n.getChild(i);
+                if (child != null) {
+                    queue.add(child);
+                }
+            }
+        }
+        return null;
     }
 
     private boolean lookLikeEntry(AccessibilityNodeInfo n) {
@@ -350,7 +385,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v30）");
+        log("广告页已出现，开始认字（v31）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -455,6 +490,7 @@ private int mShotMode = 0;
 private long mEntryLogAt = 0L;
 private int mIdleOcrMiss = 0;
 private int mEntryAlt = 0;
+private long mOcrStartAt = 0L;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -465,10 +501,15 @@ private com.google.mlkit.vision.text.TextRecognizer ocr() {
 }
 
 private void runOcr(android.graphics.Bitmap bmp, final int mode) {
+    if (mOcrBusy && System.currentTimeMillis() - mOcrStartAt > 12000L) {
+        mOcrBusy = false;
+        log("上一次文字识别超时，重新开始");
+    }
     if (mOcrBusy) {
         return;
     }
     mOcrBusy = true;
+    mOcrStartAt = System.currentTimeMillis();
     try {
         com.google.mlkit.vision.common.InputImage img =
                 com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0);
