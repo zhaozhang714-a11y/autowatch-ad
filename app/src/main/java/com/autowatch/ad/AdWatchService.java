@@ -395,7 +395,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v34：拒绝续看邀请）");
+        log("广告页已出现，开始认字（v35：按文字位置点按钮）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -538,7 +538,7 @@ private void runOcr(android.graphics.Bitmap bmp, final int mode) {
                 if (mode == 1) {
                     actByEntry(result);
                 } else {
-                    actByText(s.replace(" ", "").replace("\n", ""));
+                    actByText(result);
                 }
             }
         }).addOnFailureListener(new com.google.android.gms.tasks.OnFailureListener() {
@@ -629,7 +629,12 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
     }
 }
 
-private void actByText(String s) {
+private void actByText(com.google.mlkit.vision.text.Text result) {
+    String s = result.getText();
+    if (s == null) {
+        return;
+    }
+    s = s.replace(" ", "").replace("\n", "");
     long now = System.currentTimeMillis();
     long el = elapsedInState();
     if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
@@ -640,7 +645,8 @@ private void actByText(String s) {
             || s.contains("继续解锁"));
     boolean paused = !bonusOffer && (s.contains("继续观看") || s.contains("继续解锁"));
     int sec = parseSeconds(s);
-    boolean claimWord = s.contains("领取") || s.contains("顿取") || s.contains("领奖");
+    boolean claimWord = (s.contains("领取") || s.contains("顿取"))
+            && !s.contains("金币") && !s.contains("待领取") && !s.contains("提现");
     boolean countdown = sec >= 0 && claimWord;
     boolean finished = s.contains("领取成功");
     boolean claim = !countdown && (finished || claimWord);
@@ -669,8 +675,13 @@ private void actByText(String s) {
         mCloseSteps = 0;
         mAdEndAt = 0L;
         mBonusRefused += 1;
-        boolean ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
-        log("看到「再看X秒得免费时长」的续看邀请，点「坚持退出」不要加时 第" + mBonusRefused + "次 手势=" + ok);
+        boolean ok = tapLineOn(result, new String[]{"坚持退出", "暂不", "退出观看"},
+                new String[]{"继续"}, 0.30f, 0.96f,
+                "看到「再看X秒得免费时长」的续看邀请，点「坚持退出」不要加时 第" + mBonusRefused + "次");
+        if (!ok) {
+            ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
+            log("没认出「坚持退出」的位置，按老坐标点 手势=" + ok);
+        }
         return;
     }
 
@@ -683,8 +694,12 @@ private void actByText(String s) {
         mGreenTaps += 1;
         mCloseSteps = 0;
         mAdEndAt = 0L;
-        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-        log("识别到「继续观看」，点一次恢复播放 第" + mGreenTaps + "次 手势=" + ok);
+        boolean ok = tapLineOn(result, new String[]{"继续观看", "继续解锁"},
+                new String[]{"坚持"}, 0.30f, 0.96f, "识别到「继续观看」，点一次恢复播放 第" + mGreenTaps + "次");
+        if (!ok) {
+            ok = tapRatio(CLAIM_X, CLAIM_Y);
+            log("没认出「继续观看」的位置，按屏幕中心点 手势=" + ok);
+        }
         return;
     }
 
@@ -717,8 +732,19 @@ private void actByText(String s) {
         mGreenTaps = 0;
         if (mCloseSteps < 3) {
             mCloseSteps += 1;
-            boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-            log("广告播完了，识别到「领取成功/领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
+            int step = mCloseSteps;
+            boolean ok = tapLineOn(result, new String[]{"领取奖励", "领取成功", "立即领取", "领取"},
+                    new String[]{"秒", "金币", "待领取", "提现", "我的", "说明"},
+                    0.25f, 0.99f, "广告播完了，按「领取」文字位置点 第" + step + "次");
+            if (!ok) {
+                ok = tapLineOn(result, new String[]{"领取奖励", "领取成功", "立即领取", "领取"},
+                        new String[]{"秒", "金币", "待领取", "提现", "我的", "说明"},
+                        0.03f, 0.99f, "领取按钮在上方，按文字位置点 第" + step + "次");
+            }
+            if (!ok) {
+                mCloseSteps = step - 1;
+                log("没认出领取按钮的位置，这一轮先不点，免得把广告点停 第" + step + "次");
+            }
             return;
         }
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
@@ -758,6 +784,63 @@ private void actByText(String s) {
         return;
     }
     closeLadder();
+}
+
+private boolean tapLineOn(com.google.mlkit.vision.text.Text result, String[] keys, String[] bans,
+                          float minY, float maxY, String what) {
+    int w = getResources().getDisplayMetrics().widthPixels;
+    int h = getResources().getDisplayMetrics().heightPixels;
+    android.graphics.Rect best = null;
+    for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
+        for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
+            String t = line.getText();
+            if (t == null) {
+                continue;
+            }
+            t = t.replace(" ", "").replace("\n", "");
+            if (t.length() == 0) {
+                continue;
+            }
+            boolean hit = false;
+            for (int i = 0; i < keys.length; i++) {
+                if (t.contains(keys[i])) {
+                    hit = true;
+                    break;
+                }
+            }
+            if (!hit) {
+                continue;
+            }
+            for (int i = 0; i < bans.length; i++) {
+                if (t.contains(bans[i])) {
+                    hit = false;
+                    break;
+                }
+            }
+            if (!hit) {
+                continue;
+            }
+            android.graphics.Rect r = line.getBoundingBox();
+            if (r == null) {
+                continue;
+            }
+            float cy = (r.top + r.bottom) * 0.5f / h;
+            if (cy < minY || cy > maxY) {
+                continue;
+            }
+            if (best == null || r.width() * r.height() > best.width() * best.height()) {
+                best = new android.graphics.Rect(r);
+            }
+        }
+    }
+    if (best == null) {
+        return false;
+    }
+    int px = (best.left + best.right) / 2;
+    int py = (best.top + best.bottom) / 2;
+    boolean ok = tapRatio((float) px / w, (float) py / h);
+    log(what + "（" + px + "," + py + "）手势=" + ok);
+    return ok;
 }
 
 private int parseSeconds(String s) {
