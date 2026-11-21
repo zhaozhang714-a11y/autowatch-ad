@@ -146,6 +146,7 @@ public class AdWatchService extends AccessibilityService {
             mGreenTaps = 0;
             mShotIdleLog = 0;
             mLastCountdownAt = 0L;
+            mAdEndAt = 0L;
         }
     }
 
@@ -393,7 +394,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v32）");
+        log("广告页已出现，开始认字（v33：读秒计时）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -499,6 +500,7 @@ private long mEntryLogAt = 0L;
 private int mIdleOcrMiss = 0;
 private int mEntryAlt = 0;
 private long mOcrStartAt = 0L;
+private long mAdEndAt = 0L;
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -626,14 +628,17 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
 }
 
 private void actByText(String s) {
+    long now = System.currentTimeMillis();
     long el = elapsedInState();
-    if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
+    if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
-    boolean countdown = s.contains("秒后可领取") || s.contains("秒后领取") || s.contains("后可领取");
     boolean paused = s.contains("继续观看") || s.contains("继续解锁") || s.contains("坚持退出");
+    int sec = parseSeconds(s);
+    boolean claimWord = s.contains("领取") || s.contains("顿取") || s.contains("领奖");
+    boolean countdown = sec >= 0 && claimWord;
     boolean finished = s.contains("领取成功");
-    boolean claim = !countdown && (finished || s.contains("领取奖励"));
+    boolean claim = !countdown && (finished || claimWord);
     int marks = 0;
     if (s.contains("版本号")) {
         marks += 1;
@@ -651,8 +656,8 @@ private void actByText(String s) {
         marks += 1;
     }
     boolean landing = marks >= 2 && !countdown;
-    boolean quiet = System.currentTimeMillis() - mOcrLogAt < 6000L;
-    long sinceCountdown = System.currentTimeMillis() - mLastCountdownAt;
+    boolean quiet = now - mOcrLogAt < 6000L;
+    long sinceCountdown = now - mLastCountdownAt;
 
     if (paused) {
         if (mGreenTaps >= 6) {
@@ -662,27 +667,38 @@ private void actByText(String s) {
         }
         mGreenTaps += 1;
         mCloseSteps = 0;
+        mAdEndAt = 0L;
         boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
         log("识别到「继续观看」，点一次恢复播放 第" + mGreenTaps + "次 手势=" + ok);
         return;
     }
 
     if (countdown) {
-        mLastCountdownAt = System.currentTimeMillis();
+        mLastCountdownAt = now;
         mGreenTaps = 0;
         mCloseSteps = 0;
-        if (el < AD_MIN_WATCH_MS + 100000L) {
-            if (!quiet) {
-                mOcrLogAt = System.currentTimeMillis();
-                log("倒计时还在走（" + brief(s) + "），继续等，不点屏幕");
+        if (sec >= 2 && sec <= 120) {
+            long end = now + (long) sec * 1000L;
+            if (end > mAdEndAt) {
+                mAdEndAt = end;
             }
-            return;
         }
-        closeLadder();
+        if (!quiet) {
+            mOcrLogAt = now;
+            long left = (mAdEndAt - now) / 1000L;
+            log("读到倒计时 " + sec + " 秒（还有约 " + left + " 秒可领取），不点屏幕");
+        }
         return;
     }
 
-    if (claim && el >= 45000L && sinceCountdown > 12000L) {
+    boolean timeOk;
+    if (mAdEndAt > 0L) {
+        timeOk = now >= mAdEndAt + 1500L;
+    } else {
+        timeOk = el >= 45000L && sinceCountdown > 12000L;
+    }
+
+    if (claim && timeOk) {
         mGreenTaps = 0;
         if (mCloseSteps < 3) {
             mCloseSteps += 1;
@@ -695,7 +711,7 @@ private void actByText(String s) {
         return;
     }
 
-    if (landing && el >= 35000L && sinceCountdown > 6000L) {
+    if (landing && timeOk && sinceCountdown > 6000L) {
         mGreenTaps = 0;
         int step = (mCloseSteps % 2) + 1;
         mCloseSteps = mCloseSteps + 1;
@@ -710,14 +726,45 @@ private void actByText(String s) {
         return;
     }
 
+    if (mAdEndAt > 0L && now < mAdEndAt + 1500L) {
+        if (!quiet) {
+            mOcrLogAt = now;
+            long left = (mAdEndAt - now) / 1000L;
+            log("还没到读到的结束时间，还剩约 " + left + " 秒，继续等（" + brief(s) + "）");
+        }
+        return;
+    }
+
     if (el < AD_MIN_WATCH_MS + 100000L) {
         if (!quiet) {
-            mOcrLogAt = System.currentTimeMillis();
+            mOcrLogAt = now;
             log("只看不点，等广告播完（" + brief(s) + "）");
         }
         return;
     }
     closeLadder();
+}
+
+private int parseSeconds(String s) {
+    if (s == null) {
+        return -1;
+    }
+    int idx = s.indexOf("秒");
+    if (idx <= 0) {
+        return -1;
+    }
+    int start = idx;
+    while (start > 0 && Character.isDigit(s.charAt(start - 1))) {
+        start -= 1;
+    }
+    if (start == idx) {
+        return -1;
+    }
+    try {
+        return Integer.parseInt(s.substring(start, idx));
+    } catch (Throwable t) {
+        return -1;
+    }
 }
 
 private void closeLadder() {
