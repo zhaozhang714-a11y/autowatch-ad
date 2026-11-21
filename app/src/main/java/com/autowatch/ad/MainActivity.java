@@ -1,4 +1,4 @@
-package com.autowatch.ad;
+﻿package com.autowatch.ad;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
@@ -159,7 +159,7 @@ public class MainActivity extends Activity {
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
         String target = isTargetInstalled() ? "已安装" : "未安装";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv8 - 系统识别：" + registered
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv9 - 系统识别：" + registered
                 + " - 服务：" + enabled + " - 汽水音乐：" + target);
     }
 
