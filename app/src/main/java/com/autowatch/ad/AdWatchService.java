@@ -217,7 +217,7 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        if (dialogVisible(root)) {
+        if (mOcrFailed && dialogVisible(root)) {
             if (tapClaim(root)) {
                 log("发现领取奖励弹窗，已点击");
                 mAdSeen = true;
@@ -318,7 +318,7 @@ public class AdWatchService extends AccessibilityService {
 
     private void runWaitEntry(AccessibilityNodeInfo root) {
         long elapsed = elapsedInState();
-        if (dialogVisible(root)) {
+        if (mOcrFailed && dialogVisible(root)) {
             if (tapClaim(root)) {
                 log("弹出领取奖励，已点击");
                 mAdSeen = true;
@@ -332,6 +332,14 @@ public class AdWatchService extends AccessibilityService {
             mAdSeen = true;
             enterState(CLOSE_AD);
             scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
+            if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1900L) {
+                mShotMode = 0;
+                lookAtScreen();
+            }
+            scheduleNext(900L);
             return;
         }
         if (elapsed >= 10000L) {
@@ -375,7 +383,7 @@ public class AdWatchService extends AccessibilityService {
         scheduleNext(Config.POLL_INTERVAL_MS);
         return;
     }
-    if (dialogVisible(root)) {
+    if (mOcrFailed && dialogVisible(root)) {
         if (tapClaim(root)) {
             log("先点领取奖励再关闭");
             mStateEnteredAt = System.currentTimeMillis();
@@ -385,7 +393,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v31）");
+        log("广告页已出现，开始认字（v32）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
