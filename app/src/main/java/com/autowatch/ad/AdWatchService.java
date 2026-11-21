@@ -41,7 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
-    private static final long AD_MIN_WATCH_MS = 45000L;
+    private static final long AD_MIN_WATCH_MS = 50000L;
     private static final long GESTURE_GAP_MS = 3000L;
     private static final int MAX_CLOSE_STEPS = 3;
 
@@ -312,16 +312,12 @@ public class AdWatchService extends AccessibilityService {
             return;
         }
     }
-    if (elapsedInState() < AD_MIN_WATCH_MS) {
-        if (mCloseSteps == 0) {
-            mCloseSteps = 1;
-            log("广告页已出现，静等 45 秒播放完（不点屏幕）");
-        }
-        scheduleNext(800L);
-        return;
+    if (mShotIdleLog == 0) {
+        mShotIdleLog = 1;
+        log("广告页已出现，开始盯屏幕认字，50 秒内不乱点");
     }
-    if (Build.VERSION.SDK_INT >= 30 && !mShotFailed) {
-        if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 2600L) {
+    if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
+        if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
             lookAtScreen();
         }
         scheduleNext(800L);
@@ -379,15 +375,13 @@ private void lookAtScreen() {
             @Override
             public void onSuccess(AccessibilityService.ScreenshotResult result) {
                 mShotPending = false;
-                int kind = 0;
                 try {
                     android.graphics.Bitmap hb = android.graphics.Bitmap.wrapHardwareBuffer(
                             result.getHardwareBuffer(), result.getColorSpace());
                     if (hb != null) {
                         android.graphics.Bitmap soft = hb.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
                         if (soft != null) {
-                            kind = analyzeShot(soft);
-                            soft.recycle();
+                            runOcr(soft);
                         }
                     }
                 } catch (Throwable t) {
@@ -397,70 +391,171 @@ private void lookAtScreen() {
                     result.getHardwareBuffer().close();
                 } catch (Throwable ignored) {
                 }
-                actByLook(kind);
             }
 
             @Override
             public void onFailure(int errorCode) {
                 mShotPending = false;
                 mShotFailed = true;
+                mOcrFailed = true;
                 log("截图失败 code=" + errorCode + "，改用盲点");
             }
         });
     } catch (Throwable t) {
         mShotPending = false;
         mShotFailed = true;
+        mOcrFailed = true;
         log("截图不可用 " + t);
     }
 }
 
-private void actByLook(int kind) {
+private com.google.mlkit.vision.text.TextRecognizer mOcr = null;
+private boolean mOcrBusy = false;
+private boolean mOcrFailed = false;
+private long mOcrLogAt = 0L;
+
+private com.google.mlkit.vision.text.TextRecognizer ocr() {
+    if (mOcr == null) {
+        mOcr = com.google.mlkit.vision.text.TextRecognition.getClient(
+                new com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions.Builder().build());
+    }
+    return mOcr;
+}
+
+private void runOcr(android.graphics.Bitmap bmp) {
+    if (mOcrBusy) {
+        return;
+    }
+    mOcrBusy = true;
+    try {
+        com.google.mlkit.vision.common.InputImage img =
+                com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0);
+        ocr().process(img).addOnSuccessListener(
+                new com.google.android.gms.tasks.OnSuccessListener<com.google.mlkit.vision.text.Text>() {
+            @Override
+            public void onSuccess(com.google.mlkit.vision.text.Text result) {
+                mOcrBusy = false;
+                String s = result.getText();
+                if (s == null) {
+                    s = "";
+                }
+                safeRecycle(bmp);
+                actByText(s.replace(" ", "").replace("\n", ""));
+            }
+        }).addOnFailureListener(new com.google.android.gms.tasks.OnFailureListener() {
+            @Override
+            public void onFailure(Exception e) {
+                mOcrBusy = false;
+                mOcrFailed = true;
+                safeRecycle(bmp);
+                log("文字识别失败 " + e);
+            }
+        });
+    } catch (Throwable t) {
+        mOcrBusy = false;
+        mOcrFailed = true;
+        safeRecycle(bmp);
+        log("文字识别不可用 " + t);
+    }
+}
+
+private void safeRecycle(android.graphics.Bitmap bmp) {
+    try {
+        if (bmp != null && !bmp.isRecycled()) {
+            bmp.recycle();
+        }
+    } catch (Throwable ignored) {
+    }
+}
+
+private String brief(String s) {
+    if (s == null) {
+        return "";
+    }
+    return s.length() > 16 ? s.substring(0, 16) : s;
+}
+
+private void actByText(String s) {
+    long el = elapsedInState();
     if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
-    if (kind == 1) {
+    boolean paused = s.contains("继续观看") || s.contains("继续解锁") || s.contains("坚持退出");
+    boolean claim = s.contains("领取奖励") || s.contains("领取成功");
+    boolean countdown = s.contains("秒后可领取") || s.contains("秒后领取") || s.contains("后可领取");
+    boolean landing = s.contains("立即下载") || s.contains("打开应用") || s.contains("了解更多");
+    boolean quiet = System.currentTimeMillis() - mOcrLogAt < 6000L;
+
+    if (paused) {
+        if (mGreenTaps >= 6) {
+            log("「继续观看」点了很多次还没恢复，先关掉");
+            closeLadder();
+            return;
+        }
+        mGreenTaps += 1;
         mCloseSteps = 0;
-        mShotIdleLog = 0;
-        if (mGreenTaps < 4) {
-            mGreenTaps += 1;
+        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+        log("识别到「继续观看」，点一次恢复播放 第" + mGreenTaps + "次 手势=" + ok);
+        return;
+    }
+
+    if (claim && el >= 15000L) {
+        mGreenTaps = 0;
+        if (mCloseSteps < 3) {
+            mCloseSteps += 1;
             boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-            log("截图看到绿色按钮（继续观看或领取奖励），点击 第" + mGreenTaps + "次 手势=" + ok);
+            log("识别到「领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
+            return;
         }
-        return;
-    }
-    mGreenTaps = 0;
-    if (kind == 3) {
-        boolean ok = tapRatio(0.93f, 0.072f);
-        log("截图看到直播间，点最右上角叉退出直播间 手势=" + ok);
-        return;
-    }
-    if (kind == 2) {
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("截图看到广告落地页，点右上角叉关闭 手势=" + ok);
+        log("领取点了几次，点「领取成功」旁的叉 手势=" + ok);
         return;
     }
-    if (elapsedInState() < AD_MIN_WATCH_MS + 45000L) {
-        if (mShotIdleLog == 0) {
-            mShotIdleLog = 1;
-            log("画面上没有按钮，继续等广告播完，不乱点");
+
+    if (countdown) {
+        mGreenTaps = 0;
+        mCloseSteps = 0;
+        if (el < AD_MIN_WATCH_MS + 100000L) {
+            if (!quiet) {
+                mOcrLogAt = System.currentTimeMillis();
+                log("倒计时还在走（" + brief(s) + "），继续等，不点屏幕");
+            }
+            return;
+        }
+        closeLadder();
+        return;
+    }
+
+    if (landing && el >= AD_MIN_WATCH_MS) {
+        mGreenTaps = 0;
+        boolean ok = tapRatio(0.878f, 0.945f);
+        log("识别到广告落地页，点底部小叉 手势=" + ok);
+        return;
+    }
+
+    if (el < AD_MIN_WATCH_MS + 100000L) {
+        if (!quiet) {
+            mOcrLogAt = System.currentTimeMillis();
+            log("只看不点，等广告播完（" + brief(s) + "）");
         }
         return;
     }
+    closeLadder();
+}
+
+private void closeLadder() {
     mCloseSteps += 1;
     if (mCloseSteps <= 2) {
-        boolean ok = tapRatio(0.93f, 0.072f);
-        log("等了很久还没按钮，点最右上角叉 手势=" + ok);
-    } else if (mCloseSteps <= 4) {
-        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        boolean ok = tapRatio(0.905f, 0.0703f);
         log("点「领取成功」旁的叉 手势=" + ok);
-    } else if (mCloseSteps <= 6) {
+    } else if (mCloseSteps <= 4) {
         boolean ok = tapRatio(0.878f, 0.945f);
         log("点右下角小叉 手势=" + ok);
-    } else if (mCloseSteps <= 8) {
-        boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
+    } else if (mCloseSteps <= 6) {
+        boolean ok = longPressRatio(0.905f, 0.0703f);
         log("长按右上角关闭 手势=" + ok);
     } else {
-        log("实在找不到关闭入口，先把汽水音乐拉回歌曲页");
+        log("实在关不掉，先把汽水音乐拉回歌曲页");
         mAdSeen = false;
         mCloseSteps = 0;
         mClaimTappedAt = 0L;
@@ -472,43 +567,7 @@ private void actByLook(int kind) {
     }
 }
 
-private int analyzeShot(android.graphics.Bitmap bmp) {
-    int w = bmp.getWidth();
-    int h = bmp.getHeight();
-    boolean liveA = isRedPixel(bmp.getPixel(Math.round(w * 0.395f), Math.round(h * 0.0726f)));
-    boolean liveB = isRedPixel(bmp.getPixel(Math.round(w * 0.455f), Math.round(h * 0.0726f)));
-    if (liveA || liveB) {
-        return 3;
-    }
-    boolean lpA = isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f)));
-    boolean lpB = isRedPixel(bmp.getPixel(Math.round(w * 0.86f), Math.round(h * 0.177f)));
-    if (lpA && lpB) {
-        return 2;
-    }
-    int y = Math.round(h * CLAIM_Y);
-    int hit = 0;
-    float[] xs = {0.44f, 0.47f, 0.50f, 0.53f, 0.56f};
-    for (int i = 0; i < xs.length; i += 1) {
-        if (isGreenPixel(bmp.getPixel(Math.round(w * xs[i]), y))) {
-            hit += 1;
-        }
-    }
-    return hit >= 3 ? 1 : 0;
-}
 
-private boolean isGreenPixel(int color) {
-    int r = (color >> 16) & 0xff;
-    int g = (color >> 8) & 0xff;
-    int b = color & 0xff;
-    return g > 105 && g > r + 25 && g > b + 25;
-}
-
-private boolean isRedPixel(int color) {
-    int r = (color >> 16) & 0xff;
-    int g = (color >> 8) & 0xff;
-    int b = color & 0xff;
-    return r > 165 && g < 115 && b < 125;
-}
 private void forceResetTarget() {
         mResetCount += 1;
         if (mResetCount >= 3) {
