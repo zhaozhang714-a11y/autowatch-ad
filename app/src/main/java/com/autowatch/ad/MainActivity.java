@@ -27,6 +27,7 @@ public class MainActivity extends Activity {
     private Prefs prefs;
     private TextView statusText;
     private TextView remainingDaysText;
+    private TextView dumpText;
     private boolean targetLaunched;
 
     @Override
@@ -39,8 +40,10 @@ public class MainActivity extends Activity {
 
         statusText = findViewById(R.id.tvStatus);
         remainingDaysText = findViewById(R.id.tvRemainingDays);
+        dumpText = findViewById(R.id.tvDump);
         Button openAccessibilityButton = findViewById(R.id.btnOpenAccessibility);
         Button startButton = findViewById(R.id.btnStart);
+        Button dumpButton = findViewById(R.id.btnDump);
 
         refreshAccessibilityStatus();
         refreshDiagnostics();
@@ -56,6 +59,15 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 launchTargetAppOnce();
+            }
+        });
+
+        dumpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (dumpText != null) {
+                    dumpText.setText(AdWatchService.getLastDump());
+                }
             }
         });
     }
@@ -146,7 +158,7 @@ public class MainActivity extends Activity {
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
         String target = isTargetInstalled() ? "已安装" : "未安装";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv3 - 系统识别：" + registered + " - 服务：" + enabled + " - 汽水音乐：" + target);
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv4 - 系统识别：" + registered + " - 服务：" + enabled + " - 汽水音乐：" + target);
     }
 
     private void openAccessibilitySettings() {
