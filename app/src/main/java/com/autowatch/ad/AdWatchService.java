@@ -326,12 +326,19 @@ public class AdWatchService extends AccessibilityService {
             scheduleNext(Config.POLL_INTERVAL_MS);
             return;
         }
-        performGlobalAction(GLOBAL_ACTION_HOME);
         mAdSeen = false;
         mCloseSteps = 0;
         mEntryAttempts = 0;
         mPauseUntil = System.currentTimeMillis() + 8000L;
         enterState(IDLE);
+        if (mResetCount == 1) {
+            log("先把汽水音乐拉回主界面，清掉广告页");
+            launchTargetClear();
+            scheduleNext(Config.POLL_INTERVAL_MS);
+            return;
+        }
+        performGlobalAction(GLOBAL_ACTION_HOME);
+        log("切到后台再结束进程");
         mHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -347,12 +354,28 @@ public class AdWatchService extends AccessibilityService {
                 mHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        launchTarget();
+                        launchTargetClear();
                     }
                 }, 1200L);
             }
         }, 1500L);
         scheduleNext(Config.POLL_INTERVAL_MS);
+    }
+
+    private void launchTargetClear() {
+        try {
+            Intent it = getPackageManager().getLaunchIntentForPackage(Config.TARGET_PACKAGE);
+            if (it == null) {
+                log("重启失败：找不到汽水音乐");
+                return;
+            }
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(it);
+            log("已重新打开汽水音乐并清掉上层页面");
+        } catch (Throwable t) {
+            log("重启失败 " + t);
+        }
     }
 
     private void launchTarget() {
