@@ -21,5 +21,6 @@ android {
 }
 
 dependencies {
-    // 纯 Java + 系统 Activity/无障碍 API，无需 appcompat，避免 kotlin-stdlib 版本冲突
+    // 屏幕文字识别（内置中文模型，离线可用）
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.0'
 }
