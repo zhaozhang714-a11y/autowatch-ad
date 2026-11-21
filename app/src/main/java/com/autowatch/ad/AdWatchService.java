@@ -314,7 +314,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始盯屏幕认字，50 秒内不乱点");
+        log("广告页已出现，开始认字（v26：倒计时优先）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1300L) {
@@ -480,10 +480,10 @@ private void actByText(String s) {
     if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
-    boolean paused = s.contains("继续观看") || s.contains("继续解锁") || s.contains("坚持退出");
-    boolean claim = s.contains("领取奖励") || s.contains("领取成功");
     boolean countdown = s.contains("秒后可领取") || s.contains("秒后领取") || s.contains("后可领取");
-    boolean landing = s.contains("立即下载") || s.contains("打开应用") || s.contains("了解更多");
+    boolean paused = s.contains("继续观看") || s.contains("继续解锁") || s.contains("坚持退出");
+    boolean claim = !countdown && (s.contains("领取奖励") || s.contains("领取成功"));
+    boolean landing = s.contains("版本号") || s.contains("开发者：") || s.contains("隐私政策") || s.contains("举报");
     boolean quiet = System.currentTimeMillis() - mOcrLogAt < 6000L;
 
     if (paused) {
@@ -496,19 +496,6 @@ private void actByText(String s) {
         mCloseSteps = 0;
         boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
         log("识别到「继续观看」，点一次恢复播放 第" + mGreenTaps + "次 手势=" + ok);
-        return;
-    }
-
-    if (claim && el >= 15000L) {
-        mGreenTaps = 0;
-        if (mCloseSteps < 3) {
-            mCloseSteps += 1;
-            boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-            log("识别到「领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
-            return;
-        }
-        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-        log("领取点了几次，点「领取成功」旁的叉 手势=" + ok);
         return;
     }
 
@@ -526,10 +513,31 @@ private void actByText(String s) {
         return;
     }
 
-    if (landing && el >= AD_MIN_WATCH_MS) {
+    if (claim && el >= 35000L) {
         mGreenTaps = 0;
-        boolean ok = tapRatio(0.878f, 0.945f);
-        log("识别到广告落地页，点底部小叉 手势=" + ok);
+        if (mCloseSteps < 3) {
+            mCloseSteps += 1;
+            boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+            log("广告播完了，识别到「领取奖励」，点绿色领取 第" + mCloseSteps + "次 手势=" + ok);
+            return;
+        }
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("领取点了几次，点「领取成功」旁的叉 手势=" + ok);
+        return;
+    }
+
+    if (landing) {
+        mGreenTaps = 0;
+        int step = (mCloseSteps % 2) + 1;
+        mCloseSteps = mCloseSteps + 1;
+        boolean ok;
+        if (step == 1) {
+            ok = tapRatio(0.878f, 0.945f);
+            log("识别到广告落地页，点底部小叉 手势=" + ok);
+        } else {
+            ok = tapRatio(CLOSE_X, CLOSE_Y);
+            log("落地页还在，点右上角叉 手势=" + ok);
+        }
         return;
     }
 
