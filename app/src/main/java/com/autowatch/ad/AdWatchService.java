@@ -41,7 +41,7 @@ public class AdWatchService extends AccessibilityService {
     private static final float SHEET_X = 0.912f;
     private static final float SHEET_Y = 0.594f;
     private static final long CLOSE_RETRY_MS = 1500L;
-    private static final long AD_MIN_WATCH_MS = 30000L;
+    private static final long AD_MIN_WATCH_MS = 52000L;
     private static final int MAX_CLOSE_STEPS = 3;
 
     private static AdWatchService sInstance;
@@ -290,7 +290,7 @@ public class AdWatchService extends AccessibilityService {
         if (elapsedInState() < AD_MIN_WATCH_MS) {
             if (mCloseSteps == 0) {
                 mCloseSteps = 1;
-                log("广告页已出现，静等播放完再关（不点屏幕）");
+                log("广告页已出现，静等 52 秒播放完再关（不点屏幕）");
             }
             scheduleNext(800L);
             return;
