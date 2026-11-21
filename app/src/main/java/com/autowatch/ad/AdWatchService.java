@@ -263,6 +263,10 @@ public class AdWatchService extends AccessibilityService {
 
     private void runCloseAd(AccessibilityNodeInfo root) {
         if (!isAdPage(root) && !dialogVisible(root)) {
+            if (elapsedInState() < 1200L) {
+                scheduleNext(300L);
+                return;
+            }
             log("已回到歌曲页，本轮结束");
             if (mAdSeen) {
                 finishClaim();
@@ -427,7 +431,9 @@ public class AdWatchService extends AccessibilityService {
         }
         String low = String.valueOf(sCurClass).toLowerCase();
         return low.contains("adactivity") || low.contains("ads.") || low.contains(".ad.")
-                || low.contains("adwebview") || low.contains("adcontainer");
+                || low.contains("adwebview") || low.contains("adcontainer")
+                || low.contains("excitingvideo") || low.contains("videoactivity")
+                || low.contains("rewardvideo") || low.contains("ss.android");
     }
 
     private boolean dialogVisible(AccessibilityNodeInfo root) {
