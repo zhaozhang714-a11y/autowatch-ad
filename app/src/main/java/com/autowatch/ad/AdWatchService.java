@@ -1,11 +1,14 @@
 package com.autowatch.ad;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,6 +30,10 @@ public class AdWatchService extends AccessibilityService {
     private static final int MAX_CLOSE_ATTEMPTS = 3;
     private static final long CLOSE_RETRY_MS = 1200L;
 
+    private static AdWatchService sInstance;
+    private static String sLastDump = "尚未采集";
+    private static long sLastDumpAt = 0L;
+
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mPollRunnable = new Runnable() {
         @Override
@@ -44,9 +51,14 @@ public class AdWatchService extends AccessibilityService {
     private boolean mStopping = false;
     private int mCloseAttempts = 0;
 
+    static String getLastDump() {
+        return sLastDump;
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        sInstance = this;
         mPrefs = new Prefs(getApplicationContext());
         mPrefs.ensureFirstRun();
         mRunStartedAt = System.currentTimeMillis();
@@ -81,6 +93,7 @@ public class AdWatchService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        sInstance = null;
         mHandler.removeCallbacks(mPollRunnable);
         super.onDestroy();
     }
@@ -159,6 +172,10 @@ public class AdWatchService extends AccessibilityService {
         mIdleRounds += 1;
         if (mIdleRounds >= Config.MAX_IDLE_ROUNDS) {
             mIdleRounds = 0;
+        }
+        if (System.currentTimeMillis() - sLastDumpAt > 2000L) {
+            sLastDump = describeTree(root);
+            sLastDumpAt = System.currentTimeMillis();
         }
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
@@ -315,7 +332,65 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private boolean clickNode(AccessibilityNodeInfo node) {
-        return node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        if (node == null) {
+            return false;
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true;
+        }
+        return tapCenter(node);
+    }
+
+    private boolean tapCenter(AccessibilityNodeInfo node) {
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+        if (rect.width() <= 0 || rect.height() <= 0) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        Path path = new Path();
+        path.moveTo(rect.centerX(), rect.centerY());
+        GestureDescription.StrokeDescription stroke =
+                new GestureDescription.StrokeDescription(path, 0L, 80L);
+        GestureDescription description = new GestureDescription.Builder()
+                .addStroke(stroke)
+                .build();
+        return dispatchGesture(description, null, null);
+    }
+
+    private String describeTree(AccessibilityNodeInfo root) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("pkg=").append(textOf(root.getPackageName())).append("\n");
+        collect(root, sb, 0);
+        if (sb.length() <= 0) {
+            return "空节点树";
+        }
+        return sb.toString();
+    }
+
+    private void collect(AccessibilityNodeInfo node, StringBuilder sb, int depth) {
+        if (node == null || sb.length() > 5000 || depth > 20) {
+            return;
+        }
+        String text = textOf(node.getText());
+        String desc = textOf(node.getContentDescription());
+        if (!text.isEmpty() || !desc.isEmpty()) {
+            Rect rect = new Rect();
+            node.getBoundsInScreen(rect);
+            sb.append(textOf(node.getClassName()))
+                    .append(" c=").append(node.isClickable() ? 1 : 0)
+                    .append(" t=").append(text)
+                    .append(" d=").append(desc)
+                    .append(" b=").append(rect.left).append(",").append(rect.top)
+                    .append(",").append(rect.right).append(",").append(rect.bottom)
+                    .append("\n");
+        }
+        int count = node.getChildCount();
+        for (int i = 0; i < count; i += 1) {
+            collect(node.getChild(i), sb, depth + 1);
+        }
     }
 
     private void showCompletionNotice() {
