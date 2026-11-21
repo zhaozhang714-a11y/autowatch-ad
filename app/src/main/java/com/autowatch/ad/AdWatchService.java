@@ -2,7 +2,6 @@ package com.autowatch.ad;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
-import android.accessibilityservice.GestureResultCallback;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -616,7 +615,7 @@ public class AdWatchService extends AccessibilityService {
                 .build();
         mGesturePending = true;
         mLastGestureAt = System.currentTimeMillis();
-        boolean ok = dispatchGesture(description, new GestureResultCallback() {
+        boolean ok = dispatchGesture(description, new AccessibilityService.GestureResultCallback() {
             @Override
             public void onCompleted(GestureDescription gesture) {
                 mGesturePending = false;
