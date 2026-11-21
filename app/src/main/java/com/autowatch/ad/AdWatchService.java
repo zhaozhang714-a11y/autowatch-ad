@@ -74,6 +74,10 @@ public class AdWatchService extends AccessibilityService {
     private long mLastGestureAt = 0L;
     private long mClaimTappedAt = 0L;
     private int mNewAdCount = 0;
+    private int mGreenTaps = 0;
+    private boolean mShotPending = false;
+    private boolean mShotFailed = false;
+    private long mLastShotAt = 0L;
 
     static String getLastDump() {
         return sLastDump;
@@ -271,6 +275,7 @@ public class AdWatchService extends AccessibilityService {
         log("已回到歌曲页，本轮结束");
         mNewAdCount = 0;
         mClaimTappedAt = 0L;
+        mGreenTaps = 0;
         if (mAdSeen) {
             finishClaim();
             if (tapRatio(SHEET_X, SHEET_Y)) {
@@ -293,22 +298,22 @@ public class AdWatchService extends AccessibilityService {
     if (elapsedInState() < AD_MIN_WATCH_MS) {
         if (mCloseSteps == 0) {
             mCloseSteps = 1;
-            log("广告页已出现，静等 45 秒播放完再点（不点屏幕）");
+            log("广告页已出现，静等 45 秒播放完（不点屏幕）");
         }
         scheduleNext(800L);
         return;
     }
-    if (mClaimTappedAt > 0L && System.currentTimeMillis() - mClaimTappedAt > 3000L) {
-        mClaimTappedAt = 0L;
-        mNewAdCount += 1;
-        if (mNewAdCount <= 2) {
-            mStateEnteredAt = System.currentTimeMillis();
-            mCloseSteps = 1;
-            log("点了领取奖励后还在广告页，按新一条广告重新计时 45 秒");
-            scheduleNext(800L);
-            return;
+    if (Build.VERSION.SDK_INT >= 30 && !mShotFailed) {
+        if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 2600L) {
+            lookAtScreen();
         }
+        scheduleNext(800L);
+        return;
     }
+    runCloseAdBlind(root);
+}
+
+private void runCloseAdBlind(AccessibilityNodeInfo root) {
     if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
         scheduleNext(1000L);
         return;
@@ -317,24 +322,109 @@ public class AdWatchService extends AccessibilityService {
     if (mCloseSteps == 2) {
         boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
         log("广告播完，点中间绿色「领取奖励」手势=" + ok);
-        mClaimTappedAt = System.currentTimeMillis();
     } else if (mCloseSteps == 3) {
-        boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-        log("再点一次绿色「领取奖励」手势=" + ok);
-    } else if (mCloseSteps == 4) {
-        boolean ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
-        log("点「坚持退出」关掉弹窗 手势=" + ok);
-    } else if (mCloseSteps == 5) {
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
         log("点右上角关闭 手势=" + ok);
-    } else if (mCloseSteps == 6) {
+    } else if (mCloseSteps == 4) {
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("再点一次右上角关闭 手势=" + ok);
+    } else if (mCloseSteps == 5) {
         boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
         log("长按右上角关闭 手势=" + ok);
-    } else if (mCloseSteps == 7) {
-        boolean ok = tapRatio(0.50f, 0.753f);
-        log("点屏幕底部圆形关闭 手势=" + ok);
+    } else if (mCloseSteps == 6) {
+        boolean ok = tapRatio(0.878f, 0.945f);
+        log("点右下角小叉 手势=" + ok);
     } else {
         log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
+        mAdSeen = false;
+        mCloseSteps = 0;
+        mClaimTappedAt = 0L;
+        mNewAdCount = 0;
+        mGreenTaps = 0;
+        mPauseUntil = System.currentTimeMillis() + 8000L;
+        enterState(IDLE);
+        launchTargetClear();
+        scheduleNext(Config.POLL_INTERVAL_MS);
+        return;
+    }
+        scheduleNext(GESTURE_GAP_MS);
+}
+
+private void lookAtScreen() {
+    if (mShotPending) {
+        return;
+    }
+    mShotPending = true;
+    mLastShotAt = System.currentTimeMillis();
+    try {
+        takeScreenshot(android.view.Display.DEFAULT_DISPLAY, getMainExecutor(),
+                new AccessibilityService.TakeScreenshotCallback() {
+            @Override
+            public void onSuccess(AccessibilityService.ScreenshotResult result) {
+                mShotPending = false;
+                boolean green = false;
+                try {
+                    android.graphics.Bitmap hb = android.graphics.Bitmap.wrapHardwareBuffer(
+                            result.getHardwareBuffer(), result.getColorSpace());
+                    if (hb != null) {
+                        android.graphics.Bitmap soft = hb.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
+                        if (soft != null) {
+                            green = hasGreenButton(soft);
+                            soft.recycle();
+                        }
+                    }
+                } catch (Throwable t) {
+                    log("截图解析失败 " + t);
+                }
+                try {
+                    result.getHardwareBuffer().close();
+                } catch (Throwable ignored) {
+                }
+                actByLook(green);
+            }
+
+            @Override
+            public void onFailure(int errorCode) {
+                mShotPending = false;
+                mShotFailed = true;
+                log("截图失败 code=" + errorCode + "，改用盲点");
+            }
+        });
+    } catch (Throwable t) {
+        mShotPending = false;
+        mShotFailed = true;
+        log("截图不可用 " + t);
+    }
+}
+
+private void actByLook(boolean green) {
+    if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
+        return;
+    }
+    if (green) {
+        if (mGreenTaps < 2) {
+            mGreenTaps += 1;
+            boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
+            log("看到绿色「领取奖励」，点击 第" + mGreenTaps + "次 手势=" + ok);
+        } else {
+            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+            log("绿色按钮点了没反应，改点右上角叉 手势=" + ok);
+        }
+        return;
+    }
+    mGreenTaps = 0;
+    mCloseSteps += 1;
+    if (mCloseSteps <= 2) {
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("没看到绿色按钮，点右上角关闭 手势=" + ok);
+    } else if (mCloseSteps <= 4) {
+        boolean ok = tapRatio(0.878f, 0.945f);
+        log("点右下角小叉 手势=" + ok);
+    } else if (mCloseSteps <= 6) {
+        boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
+        log("长按右上角关闭 手势=" + ok);
+    } else {
+        log("截图里找不到关闭入口，先把汽水音乐拉回歌曲页");
         mAdSeen = false;
         mCloseSteps = 0;
         mClaimTappedAt = 0L;
@@ -342,11 +432,27 @@ public class AdWatchService extends AccessibilityService {
         mPauseUntil = System.currentTimeMillis() + 8000L;
         enterState(IDLE);
         launchTargetClear();
-        scheduleNext(Config.POLL_INTERVAL_MS);
-        return;
     }
-    scheduleNext(GESTURE_GAP_MS);
-}private void forceResetTarget() {
+}
+
+private boolean hasGreenButton(android.graphics.Bitmap bmp) {
+    int w = bmp.getWidth();
+    int h = bmp.getHeight();
+    int y = (int) (h * CLAIM_Y);
+    int hit = 0;
+    float[] xs = {0.44f, 0.47f, 0.50f, 0.53f, 0.56f};
+    for (int i = 0; i < xs.length; i += 1) {
+        int color = bmp.getPixel(Math.round(w * xs[i]), y);
+        int r = (color >> 16) & 0xff;
+        int g = (color >> 8) & 0xff;
+        int b = color & 0xff;
+        if (g > 105 && g > r + 25 && g > b + 25) {
+            hit += 1;
+        }
+    }
+    return hit >= 3;
+}
+private void forceResetTarget() {
         mResetCount += 1;
         if (mResetCount >= 3) {
             mResetCount = 0;
