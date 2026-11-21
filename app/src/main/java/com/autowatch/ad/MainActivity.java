@@ -97,14 +97,37 @@ public class MainActivity extends Activity {
         if (TextUtils.isEmpty(enabled)) {
             return false;
         }
-        String flattened = getPackageName() + "/" + ACCESSIBILITY_SERVICE_CLASS;
         for (String item : enabled.split(":")) {
             String service = item.trim();
-            if (service.equals(flattened) || service.equals(ACCESSIBILITY_SERVICE_CLASS)) {
+            if (TextUtils.isEmpty(service)) {
+                continue;
+            }
+            int slash = service.indexOf('/');
+            if (slash <= 0) {
+                continue;
+            }
+            String pkg = service.substring(0, slash);
+            String cls = service.substring(slash + 1);
+            if (!getPackageName().equals(pkg)) {
+                continue;
+            }
+            if (cls.startsWith(".")) {
+                cls = pkg + cls;
+            }
+            if (ACCESSIBILITY_SERVICE_CLASS.equals(cls)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private boolean isTargetInstalled() {
+        try {
+            getPackageManager().getPackageInfo(Config.TARGET_PACKAGE, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void refreshAccessibilityStatus() {
@@ -122,7 +145,8 @@ public class MainActivity extends Activity {
         }
         String registered = isServiceRegistered() ? "已注册" : "未注册";
         String enabled = isAccessibilityServiceEnabled() ? "已开启" : "未开启";
-        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv2 - 系统识别：" + registered + " - 服务：" + enabled);
+        String target = isTargetInstalled() ? "已安装" : "未安装";
+        remainingDaysText.setText("剩余天数：" + remainingDays() + " 天\nv3 - 系统识别：" + registered + " - 服务：" + enabled + " - 汽水音乐：" + target);
     }
 
     private void openAccessibilitySettings() {
