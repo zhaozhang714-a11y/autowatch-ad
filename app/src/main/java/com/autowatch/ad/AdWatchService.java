@@ -75,6 +75,7 @@ public class AdWatchService extends AccessibilityService {
     private long mClaimTappedAt = 0L;
     private int mNewAdCount = 0;
     private int mGreenTaps = 0;
+    private int mShotIdleLog = 0;
     private boolean mShotPending = false;
     private boolean mShotFailed = false;
     private long mLastShotAt = 0L;
@@ -142,6 +143,8 @@ public class AdWatchService extends AccessibilityService {
             mCloseSteps = 0;
             mClaimTappedAt = 0L;
             mNewAdCount = 0;
+            mGreenTaps = 0;
+            mShotIdleLog = 0;
         }
     }
 
@@ -376,14 +379,14 @@ private void lookAtScreen() {
             @Override
             public void onSuccess(AccessibilityService.ScreenshotResult result) {
                 mShotPending = false;
-                boolean green = false;
+                int kind = 0;
                 try {
                     android.graphics.Bitmap hb = android.graphics.Bitmap.wrapHardwareBuffer(
                             result.getHardwareBuffer(), result.getColorSpace());
                     if (hb != null) {
                         android.graphics.Bitmap soft = hb.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
                         if (soft != null) {
-                            green = hasGreenButton(soft);
+                            kind = analyzeShot(soft);
                             soft.recycle();
                         }
                     }
@@ -394,7 +397,7 @@ private void lookAtScreen() {
                     result.getHardwareBuffer().close();
                 } catch (Throwable ignored) {
                 }
-                actByLook(green);
+                actByLook(kind);
             }
 
             @Override
@@ -411,26 +414,42 @@ private void lookAtScreen() {
     }
 }
 
-private void actByLook(boolean green) {
+private void actByLook(int kind) {
     if (mGesturePending || System.currentTimeMillis() - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
-    if (green) {
-        if (mGreenTaps < 2) {
+    if (kind == 1) {
+        mCloseSteps = 0;
+        mShotIdleLog = 0;
+        if (mGreenTaps < 4) {
             mGreenTaps += 1;
             boolean ok = tapRatio(CLAIM_X, CLAIM_Y);
-            log("看到绿色「领取奖励」，点击 第" + mGreenTaps + "次 手势=" + ok);
-        } else {
-            boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("绿色按钮点了没反应，改点右上角叉 手势=" + ok);
+            log("截图看到绿色按钮（继续观看或领取奖励），点击 第" + mGreenTaps + "次 手势=" + ok);
         }
         return;
     }
     mGreenTaps = 0;
+    if (kind == 3) {
+        boolean ok = tapRatio(0.93f, 0.072f);
+        log("截图看到直播间，点最右上角叉退出直播间 手势=" + ok);
+        return;
+    }
+    if (kind == 2) {
+        boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
+        log("截图看到广告落地页，点右上角叉关闭 手势=" + ok);
+        return;
+    }
+    if (elapsedInState() < AD_MIN_WATCH_MS + 45000L) {
+        if (mShotIdleLog == 0) {
+            mShotIdleLog = 1;
+            log("画面上没有按钮，继续等广告播完，不乱点");
+        }
+        return;
+    }
     mCloseSteps += 1;
     if (mCloseSteps <= 2) {
         boolean ok = tapRatio(0.93f, 0.072f);
-        log("先点最右上角叉（退出直播间/关闭）手势=" + ok);
+        log("等了很久还没按钮，点最右上角叉 手势=" + ok);
     } else if (mCloseSteps <= 4) {
         boolean ok = tapRatio(CLOSE_X, CLOSE_Y);
         log("点「领取成功」旁的叉 手势=" + ok);
@@ -441,33 +460,51 @@ private void actByLook(boolean green) {
         boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
         log("长按右上角关闭 手势=" + ok);
     } else {
-        log("截图里找不到关闭入口，先把汽水音乐拉回歌曲页");
+        log("实在找不到关闭入口，先把汽水音乐拉回歌曲页");
         mAdSeen = false;
         mCloseSteps = 0;
         mClaimTappedAt = 0L;
         mNewAdCount = 0;
+        mGreenTaps = 0;
         mPauseUntil = System.currentTimeMillis() + 8000L;
         enterState(IDLE);
         launchTargetClear();
     }
 }
 
-private boolean hasGreenButton(android.graphics.Bitmap bmp) {
+private int analyzeShot(android.graphics.Bitmap bmp) {
     int w = bmp.getWidth();
     int h = bmp.getHeight();
-    int y = (int) (h * CLAIM_Y);
+    if (isRedPixel(bmp.getPixel(Math.round(w * 0.395f), Math.round(h * 0.0726f))) || isRedPixel(bmp.getPixel(Math.round(w * 0.455f), Math.round(h * 0.0726f))) {
+        return 3;
+    }
+    if (isRedPixel(bmp.getPixel(Math.round(w * 0.80f), Math.round(h * 0.177f))
+            && isRedPixel(bmp.getPixel(Math.round(w * 0.86f), Math.round(h * 0.177f))) {
+        return 2;
+    }
+    int y = Math.round(h * CLAIM_Y);
     int hit = 0;
     float[] xs = {0.44f, 0.47f, 0.50f, 0.53f, 0.56f};
     for (int i = 0; i < xs.length; i += 1) {
-        int color = bmp.getPixel(Math.round(w * xs[i]), y);
-        int r = (color >> 16) & 0xff;
-        int g = (color >> 8) & 0xff;
-        int b = color & 0xff;
-        if (g > 105 && g > r + 25 && g > b + 25) {
+        if (isGreenPixel(bmp.getPixel(Math.round(w * xs[i]), y))) {
             hit += 1;
         }
     }
-    return hit >= 3;
+    return hit >= 3 ? 1 : 0;
+}
+
+private boolean isGreenPixel(int color) {
+    int r = (color >> 16) & 0xff;
+    int g = (color >> 8) & 0xff;
+    int b = color & 0xff;
+    return g > 105 && g > r + 25 && g > b + 25;
+}
+
+private boolean isRedPixel(int color) {
+    int r = (color >> 16) & 0xff;
+    int g = (color >> 8) & 0xff;
+    int b = color & 0xff;
+    return r > 165 && g < 115 && b < 125;
 }
 private void forceResetTarget() {
         mResetCount += 1;
