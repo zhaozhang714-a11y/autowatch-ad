@@ -492,7 +492,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v43：只认页头那一条）");
+        log("广告页已出现，开始认字（v44：弹窗优先，页头让位）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -566,9 +566,7 @@ private void lookAtScreen() {
                                     safeRecycle(mPendingFull);
                                     mPendingFull = null;
                                 }
-                                if (mTick % 3 == 0) {
-                                    mPendingFull = soft;
-                                }
+                                mPendingFull = soft;
                                 android.graphics.Bitmap head = null;
                                 try {
                                     int hh = (int) (soft.getHeight() * 0.13f);
@@ -641,8 +639,9 @@ private int mTick = 0;
 private android.graphics.Bitmap mPendingFull = null;
 private long mHeaderLogAt = 0L;
 private int mHeaderHit = 0;
+private long mDialogSeenAt = 0L;
 
-// v43：只认页头那一条（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v44：弹窗优先，页头让位（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -655,6 +654,13 @@ private void actByHeader(com.google.mlkit.vision.text.Text result) {
     }
     if (s.contains("领取成功")) {
         mHeaderHit += 1;
+        if (now - mDialogSeenAt < 6000L) {
+            if (now - mHeaderLogAt >= 5000L) {
+                mHeaderLogAt = now;
+                log("页头读到「领取成功」，但奖励弹窗正开着，先让给弹窗，不点页头");
+            }
+            return;
+        }
         if (now - mHeadClaimAt >= 7000L) {
             mHeadClaimAt = now;
             boolean ok = tapRatio(0.88f, 0.078f);
@@ -820,6 +826,9 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     s = s.replace(" ", "").replace("\n", "");
     long now = System.currentTimeMillis();
     long el = elapsedInState();
+    if (s.contains("领取奖励") || s.contains("立即领取") || s.contains("坚持退出")) {
+        mDialogSeenAt = now;
+    }
     if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
@@ -863,6 +872,7 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     long sinceCountdown = now - mLastCountdownAt;
 
     if (rewardDialog) {
+        mDialogSeenAt = now;
         mGreenTaps = 0;
         mAdEndAt = 0L;
         int w = getResources().getDisplayMetrics().widthPixels;
@@ -900,6 +910,7 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     }
 
     if (bonusOffer) {
+        mDialogSeenAt = now;
         mGreenTaps = 0;
         mCloseSteps = 0;
         mAdEndAt = 0L;
