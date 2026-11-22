@@ -629,8 +629,8 @@ private void runCloseAdBlind(AccessibilityNodeInfo root) {
         boolean ok = longPressRatio(CLOSE_X, CLOSE_Y);
         log("长按右上角关闭 手势=" + ok);
     } else if (mCloseSteps == 6) {
-        boolean ok = tapRatio(0.878f, 0.945f);
-        log("点右下角小叉 手势=" + ok);
+        boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+        log("按一次返回键退出广告 手势=" + ok);
     } else {
         log("广告页还是关不掉，先把汽水音乐拉回歌曲页");
         mAdSeen = false;
@@ -753,14 +753,17 @@ private boolean looksLikeLanding(String s) {
     if (s == null || s.contains("秒")) {
         return false;
     }
-    return s.contains("立即打开") || s.contains("立即下载") || s.contains("购物车")
+            return s.contains("立即打开") || s.contains("立即下载") || s.contains("购物车")
             || s.contains("领券") || s.contains("进店") || s.contains("客服")
             || s.contains("加微信") || s.contains("下载") || s.contains("安装")
             || s.contains("版本号") || s.contains("开发者") || s.contains("旗舰店")
-            || s.contains("适用于") || s.contains("已售");
+            || s.contains("适用于") || s.contains("已售")
+            || s.contains("策略") || s.contains("战法") || s.contains("指标")
+            || s.contains("掘金") || s.contains("交易日") || s.contains("精选")
+            || s.contains("主线") || s.contains("行情") || s.contains("股市");
 }
 
-// v47：不再盲点落地页，顺手关掉系统选择弹窗（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v48：彻底不点右下角，落地页只退出（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -1170,6 +1173,22 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
             log("刚点过页头的「领取成功」，再等它反应");
             return;
         }
+        if (hasClaimNode()) {
+            mHeadClaimAt = now;
+            ok = clickClaimNodeNow();
+            log("还没领到，但节点树里「领取成功」按钮还在，再点它一次 手势=" + ok);
+            return;
+        }
+        if (looksLikeLanding(s)) {
+            if (now - mBackTapAt >= 6000L) {
+                mBackTapAt = now;
+                mBackStep += 1;
+                boolean bok = (mBackStep % 2 == 1)
+                        ? tapRatio(0.093f, 0.081f) : performGlobalAction(GLOBAL_ACTION_BACK);
+                log("页头有「领取成功」但这是商品/落地页，不点广告按钮，只退出去 手势=" + bok);
+            }
+            return;
+        }
         log("页头「领取成功」点了几次，还是没奖励按钮，直接关广告页");
         closeLadder();
         return;
@@ -1181,14 +1200,14 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         mCloseSteps = mCloseSteps + 1;
         boolean ok;
         if (step == 1) {
-            ok = tapRatio(0.053f, 0.074f);
+            ok = tapRatio(0.093f, 0.081f);
             log("识别到广告落地页（提现/下载那种），点它左上角返回箭头 手势=" + ok);
         } else if (step == 2) {
             ok = tapRatio(CLOSE_X, CLOSE_Y);
             log("落地页还在，点右上角叉 手势=" + ok);
         } else if (step == 3) {
-            ok = tapRatio(0.878f, 0.945f);
-            log("落地页还在，点右下角小叉 手势=" + ok);
+            ok = performGlobalAction(GLOBAL_ACTION_BACK);
+            log("落地页还在，按一次返回键 手势=" + ok);
         } else {
             ok = performGlobalAction(GLOBAL_ACTION_BACK);
             log("落地页还在，按一次返回键 手势=" + ok);
@@ -1419,8 +1438,8 @@ private void closeLadder() {
         boolean ok = tapRatio(0.905f, 0.0703f);
         log("点「领取成功」旁的叉 手势=" + ok);
     } else if (mCloseSteps <= 4) {
-        boolean ok = tapRatio(0.878f, 0.945f);
-        log("点右下角小叉 手势=" + ok);
+        boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+        log("按一次返回键退出广告 手势=" + ok);
     } else if (mCloseSteps <= 6) {
         boolean ok = longPressRatio(0.905f, 0.0703f);
         log("长按右上角关闭 手势=" + ok);
