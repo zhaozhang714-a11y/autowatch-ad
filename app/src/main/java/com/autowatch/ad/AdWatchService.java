@@ -766,10 +766,15 @@ private boolean looksLikeLanding(String s) {
             || s.contains("适用于") || s.contains("已售")
             || s.contains("策略") || s.contains("战法") || s.contains("指标")
             || s.contains("掘金") || s.contains("交易日") || s.contains("精选")
-            || s.contains("主线") || s.contains("行情") || s.contains("股市");
+            || s.contains("主线") || s.contains("行情") || s.contains("股市")
+            || s.contains("保险") || s.contains("投保") || s.contains("理赔")
+            || s.contains("保障") || s.contains("免健告") || s.contains("去付款")
+            || s.contains("立即安装") || s.contains("应用商店") || s.contains("贷款")
+            || s.contains("借款") || s.contains("额度") || s.contains("信用卡")
+            || s.contains("红包") || s.contains("抽奖") || s.contains("保障责任");
 }
 
-// v50：卡住的广告直接放弃，加时弹窗先点节点再按返回（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v51：把保险/贷款/应用商店这类落地页当广告页等死的问题修掉（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -1033,6 +1038,18 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
+    if (s.contains("温馨提示") && (s.contains("前往抖音") || s.contains("继续查看"))) {
+        if (now - mBackTapAt >= 4000L) {
+            mBackTapAt = now;
+            boolean ok = tapLineOn(result, new String[]{"继续查看", "取消"}, new String[]{"前往"},
+                    0.30f, 0.95f, "弹出「温馨提示」，点「继续查看」不要跳抖音");
+            if (!ok) {
+                ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                log("「温馨提示」认不出继续查看，按返回关掉 手势=" + ok);
+            }
+        }
+        return;
+    }
     boolean bonusOffer = s.contains("坚持退出")
             && (s.contains("得免费") || s.contains("分钟") || s.contains("再看")
             || s.contains("继续解锁"));
@@ -1251,23 +1268,20 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         return;
     }
 
-    if (landing && el >= 8000L && sinceCountdown > 6000L) {
+    if ((landing || looksLikeLanding(s)) && el >= 6000L && sinceCountdown > 6000L && !hasClaimNode()) {
         mGreenTaps = 0;
-        int step = (mCloseSteps % 4) + 1;
         mCloseSteps = mCloseSteps + 1;
+        int step = ((mCloseSteps - 1) % 4) + 1;
         boolean ok;
-        if (step == 1) {
-            ok = tapRatio(0.093f, 0.081f);
-            log("识别到广告落地页（提现/下载那种），点它左上角返回箭头 手势=" + ok);
-        } else if (step == 2) {
-            ok = tapRatio(CLOSE_X, CLOSE_Y);
-            log("落地页还在，点右上角叉 手势=" + ok);
-        } else if (step == 3) {
+        if (step == 1 || step == 2) {
             ok = performGlobalAction(GLOBAL_ACTION_BACK);
-            log("落地页还在，按一次返回键 手势=" + ok);
+            log("识别到保险/商品/落地页（不是广告视频），按返回键退出去 第" + step + "步 手势=" + ok);
+        } else if (step == 3) {
+            ok = tapRatio(0.093f, 0.081f);
+            log("落地页还在，点它左上角返回箭头 第" + step + "步 手势=" + ok);
         } else {
             ok = performGlobalAction(GLOBAL_ACTION_BACK);
-            log("落地页还在，按一次返回键 手势=" + ok);
+            log("落地页还在，再按一次返回键 第" + step + "步 手势=" + ok);
         }
         return;
     }
