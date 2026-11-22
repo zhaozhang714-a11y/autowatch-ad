@@ -159,6 +159,7 @@ public class AdWatchService extends AccessibilityService {
             mBlindStep = 0;
             mLastBlindAt = 0L;
             mNoHeaderSign = 0;
+            mBackTapAt = 0L;
         }
     }
 
@@ -409,6 +410,26 @@ public class AdWatchService extends AccessibilityService {
         return tapPoint(rect.left + (int) (rect.width() * 0.45f), rect.centerY());
     }
 
+    private boolean clickClaimNodeNow() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (claimNodeDesc(root) == null) {
+                return false;
+            }
+            return clickClaimNode(root);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private boolean hasClaimNode() {
+        try {
+            return claimNodeDesc(getRootInActiveWindow()) != null;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private AccessibilityNodeInfo findEntryNode(AccessibilityNodeInfo root) {
         int w = getResources().getDisplayMetrics().widthPixels;
         int h = getResources().getDisplayMetrics().heightPixels;
@@ -551,7 +572,9 @@ public class AdWatchService extends AccessibilityService {
         log("广告页已出现，开始认字（v45：先看节点树有没有领取成功按钮）");
     }
     long nowNode = System.currentTimeMillis();
-    if (nowNode - mHeadClaimAt >= 5000L && nowNode - mLastCountdownAt > 4000L) {
+    boolean adOver = mAdEndAt <= 0L || nowNode > mAdEndAt + 1000L;
+    if (adOver && nowNode - mLastCountdownAt > 3000L && nowNode - mDialogSeenAt >= 5000L
+            && nowNode - mHeadClaimAt >= 5000L) {
         String desc = claimNodeDesc(root);
         if (desc != null) {
             boolean ok = clickClaimNode(root);
@@ -709,8 +732,9 @@ private long mHeaderLogAt = 0L;
 private int mHeaderHit = 0;
 private long mDialogSeenAt = 0L;
 private int mNoHeaderSign = 0;
+private long mBackTapAt = 0L;
 
-// v45：节点树点「领取成功」（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v46：读秒一停就点领取（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -775,8 +799,23 @@ private void actByHeader(com.google.mlkit.vision.text.Text result) {
             return;
         }
         if (elapsedInState() >= 15000L) {
-            boolean ok = tapRatio(0.053f, 0.074f);
-            log("页头什么也读不到，当商品落地页处理，点左上角返回箭头 手势=" + ok);
+            if (hasClaimNode()) {
+                if (now - mHeaderLogAt >= 5000L) {
+                    mHeaderLogAt = now;
+                    log("页头读不出字，但节点树里有「领取成功」按钮，先点它领取");
+                }
+                if (now - mHeadClaimAt >= 5000L) {
+                    mHeadClaimAt = now;
+                    boolean ok = clickClaimNodeNow();
+                    log("按节点点了「领取成功」 手势=" + ok);
+                }
+                return;
+            }
+            if (now - mBackTapAt >= 12000L) {
+                mBackTapAt = now;
+                boolean ok = tapRatio(0.053f, 0.074f);
+                log("页头读不到、也没有领取按钮，当落地页处理，点左上角返回箭头 手势=" + ok);
+            }
         }
     }
 }
@@ -1071,9 +1110,14 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         mGreenTaps = 0;
         boolean ok = false;
         if (mHeaderTaps < 3) {
-            ok = tapLineOnFrac(result, new String[]{"领取成功", "领取奖励"},
-                    new String[]{"秒", "金币", "待领取", "提现", "我的"},
-                    0.012f, 0.17f, 0.30f, "页头变成「领取成功」，立刻点它领取");
+            ok = clickClaimNodeNow();
+            if (!ok) {
+                ok = tapLineOnFrac(result, new String[]{"领取成功", "领取奖励"},
+                        new String[]{"秒", "金币", "待领取", "提现", "我的"},
+                        0.012f, 0.17f, 0.30f, "页头变成「领取成功」，立刻点它领取");
+            } else {
+                log("页头变成「领取成功」，直接点节点按钮领取");
+            }
             if (ok) {
                 mHeaderTaps += 1;
                 mHeadClaimAt = now;
