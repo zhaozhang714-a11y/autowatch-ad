@@ -151,6 +151,9 @@ public class AdWatchService extends AccessibilityService {
             mLastCountdownAt = 0L;
             mAdEndAt = 0L;
             mBonusRefused = 0;
+            mLastSec = -1;
+            mSecSince = 0L;
+            mLockedCount = 0;
             mRewardDialogs = 0;
             mHeaderTaps = 0;
             mHeadClaimAt = 0L;
@@ -733,6 +736,9 @@ private int mEntryAlt = 0;
 private long mOcrStartAt = 0L;
 private long mAdEndAt = 0L;
 private int mBonusRefused = 0;
+private int mLastSec = -1;
+private long mSecSince = 0L;
+private int mLockedCount = 0;
 private int mRewardDialogs = 0;
 private int mHeaderTaps = 0;
 private long mHeadClaimAt = 0L;
@@ -763,7 +769,7 @@ private boolean looksLikeLanding(String s) {
             || s.contains("主线") || s.contains("行情") || s.contains("股市");
 }
 
-// v49：识破假广告页（其实是歌曲页）（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v50：卡住的广告直接放弃，加时弹窗先点节点再按返回（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -814,6 +820,27 @@ private void actByHeader(com.google.mlkit.vision.text.Text result) {
         if (now - mHeaderLogAt >= 5000L) {
             mHeaderLogAt = now;
             log("页头读到倒计时 " + sec + " 秒，等它归零再点");
+        }
+        if (sec == mLastSec) {
+            if (now - mSecSince >= 9000L) {
+                mLockedCount += 1;
+                if (mLockedCount >= 3) {
+                    log("倒计时一直停在 " + sec + " 秒，广告卡死了，放弃这一轮");
+                    mLockedCount = 0;
+                    mLastSec = -1;
+                    closeLadder();
+                    return;
+                }
+                if (now - mBackTapAt >= 6000L) {
+                    mBackTapAt = now;
+                    boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                    log("倒计时停在 " + sec + " 秒不动，广告被暂停了，按一次返回 手势=" + ok);
+                }
+            }
+        } else {
+            mLastSec = sec;
+            mSecSince = now;
+            mLockedCount = 0;
         }
         return;
     }
@@ -1089,6 +1116,36 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         mCloseSteps = 0;
         mAdEndAt = 0L;
         mBonusRefused += 1;
+        if (mBonusRefused >= 7) {
+            log("加时弹窗点了 " + mBonusRefused + " 次都关不掉，放弃这一轮回歌曲页");
+            mBonusRefused = 0;
+            closeLadder();
+            return;
+        }
+        if (mBonusRefused >= 3) {
+            if (now - mBackTapAt >= 5000L) {
+                mBackTapAt = now;
+                boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                log("加时弹窗点不掉，改按返回键 第" + mBonusRefused + "次 手势=" + ok);
+                return;
+            }
+        }
+        boolean nodeOk = false;
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo n = findNodeDescOrText(root, "坚持退出", 0);
+            if (n == null) {
+                n = findNodeDescOrText(root, "退出观看", 0);
+            }
+            if (n != null) {
+                nodeOk = clickNode(n);
+                log("加时弹窗里找到「坚持退出」节点，直接点它 手势=" + nodeOk);
+            }
+        } catch (Throwable ignored) {
+        }
+        if (nodeOk) {
+            return;
+        }
         boolean ok = tapLineOn(result, new String[]{"坚持退出", "暂不", "退出观看"},
                 new String[]{"继续"}, 0.30f, 0.96f,
                 "看到「再看X秒得免费时长」的续看邀请，点「坚持退出」不要加时 第" + mBonusRefused + "次");
