@@ -276,6 +276,20 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private void step(AccessibilityNodeInfo root) {
+        try {
+            if (findNodeDescOrText(root, "选择要使用的应用", 20) != null
+                    || findNodeDescOrText(root, "仅打开一次", 20) != null) {
+                long nowS = System.currentTimeMillis();
+                if (nowS - mBackTapAt >= 4000L) {
+                    mBackTapAt = nowS;
+                    boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                    log("识别到「选择要使用的应用/想要打开」系统弹窗，按返回关掉 手势=" + ok);
+                }
+                scheduleNext(800L);
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
         if (mState != CLOSE_AD && isLivePage()) {
             if (!mGesturePending && System.currentTimeMillis() - mLastGestureAt >= 3000L) {
                 boolean ok = tapRatio(0.93f, 0.072f);
@@ -733,8 +747,20 @@ private int mHeaderHit = 0;
 private long mDialogSeenAt = 0L;
 private int mNoHeaderSign = 0;
 private long mBackTapAt = 0L;
+private int mBackStep = 0;
 
-// v46：读秒一停就点领取（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+private boolean looksLikeLanding(String s) {
+    if (s == null || s.contains("秒")) {
+        return false;
+    }
+    return s.contains("立即打开") || s.contains("立即下载") || s.contains("购物车")
+            || s.contains("领券") || s.contains("进店") || s.contains("客服")
+            || s.contains("加微信") || s.contains("下载") || s.contains("安装")
+            || s.contains("版本号") || s.contains("开发者") || s.contains("旗舰店")
+            || s.contains("适用于") || s.contains("已售");
+}
+
+// v47：不再盲点落地页，顺手关掉系统选择弹窗（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -965,6 +991,15 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     if (s.contains("领取奖励") || s.contains("立即领取") || s.contains("坚持退出")) {
         mDialogSeenAt = now;
     }
+    if (s.contains("选择要使用的应用") || s.contains("应用分身")
+            || s.contains("想要打开") || s.contains("仅打开一次")) {
+        if (now - mBackTapAt >= 4000L) {
+            mBackTapAt = now;
+            boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+            log("出现「选择要使用的应用」这类系统弹窗，按返回关掉 手势=" + ok);
+        }
+        return;
+    }
     if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
         return;
     }
@@ -1171,13 +1206,34 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
     }
 
     if (!mSawCountdown) {
+        if (looksLikeLanding(s) || hasClaimNode()) {
+            if (hasClaimNode() && now - mHeadClaimAt >= 5000L) {
+                mHeadClaimAt = now;
+                boolean ok = clickClaimNodeNow();
+                log("商品/落地页上还有「领取成功」按钮，点它 手势=" + ok);
+                return;
+            }
+            if (now - mBackTapAt >= 6000L) {
+                mBackTapAt = now;
+                mBackStep += 1;
+                if (mBackStep % 3 == 1) {
+                    boolean ok = tapRatio(0.093f, 0.081f);
+                    log("商品/落地页：点左上角返回箭头 手势=" + ok);
+                } else {
+                    boolean ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                    log("商品/落地页：按返回键退出 手势=" + ok);
+                }
+                return;
+            }
+            return;
+        }
         if (mBlindStep >= 8) {
             log("一直认不出读秒，也不见领取按钮，放弃这条广告，回歌曲页");
             mCloseSteps = 0;
             closeLadder();
             return;
         }
-        if (el >= 40000L && now - mLastBlindAt >= 8000L) {
+        if (el >= 25000L && now - mLastBlindAt >= 8000L) {
             mLastBlindAt = now;
             int step = mBlindStep % 4;
             mBlindStep += 1;
@@ -1186,14 +1242,14 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
                 ok = tapRatio(0.88f, 0.078f);
                 log("认不出读秒，盲点页头「领取成功」位置 第" + mBlindStep + "次 手势=" + ok);
             } else if (step == 1) {
-                ok = tapRatio(0.498f, 0.534f);
-                log("认不出读秒，盲点绿色「领取奖励」位置 第" + mBlindStep + "次 手势=" + ok);
-            } else if (step == 2) {
-                ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
-                log("认不出读秒，盲点「坚持退出」位置 第" + mBlindStep + "次 手势=" + ok);
-            } else {
                 ok = tapRatio(CLOSE_X, CLOSE_Y);
                 log("认不出读秒，盲点右上角叉 第" + mBlindStep + "次 手势=" + ok);
+            } else if (step == 2) {
+                ok = tapRatio(0.093f, 0.081f);
+                log("认不出读秒，盲点左上返回箭头 第" + mBlindStep + "次 手势=" + ok);
+            } else {
+                ok = performGlobalAction(GLOBAL_ACTION_BACK);
+                log("认不出读秒，按一次返回键 第" + mBlindStep + "次 手势=" + ok);
             }
             return;
         }
