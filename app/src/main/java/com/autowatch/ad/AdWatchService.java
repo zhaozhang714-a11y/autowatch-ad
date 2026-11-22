@@ -64,6 +64,9 @@ public class AdWatchService extends AccessibilityService {
     private int mEntryAttempts = 0;
     private int mIdleRounds = 0;
     private int mCloseSteps = 0;
+    private boolean mSawCountdown = false;
+    private int mBlindStep = 0;
+    private long mLastBlindAt = 0L;
     private long mStateEnteredAt = 0L;
     private long mRunStartedAt = 0L;
     private long mPauseUntil = 0L;
@@ -152,6 +155,9 @@ public class AdWatchService extends AccessibilityService {
             mHeaderTaps = 0;
             mHeadClaimAt = 0L;
             mPillFound = false;
+            mSawCountdown = false;
+            mBlindStep = 0;
+            mLastBlindAt = 0L;
         }
     }
 
@@ -486,7 +492,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v41：落地页点左上返回箭头）");
+        log("广告页已出现，开始认字（v42：认不出去就按实测坐标点）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -720,6 +726,13 @@ private void actByEntry(com.google.mlkit.vision.text.Text result) {
     if (miss == 3 || miss == 9) {
         log("这还是认不出「免费听」，不乱点屏幕，再等一轮");
     }
+    if (miss >= 3 && miss % 3 == 0 && !String.valueOf(sCurClass).contains("excitingvideo")) {
+        boolean ok = tapRatio(0.745f, 0.809f);
+        log("OCR 认不出入口，按实机量到的「免费听」坐标点一次（75%,81%）手势=" + ok);
+        if (ok) {
+            enterState(WAIT_ENTRY);
+        }
+    }
 }
 
 private void actByText(com.google.mlkit.vision.text.Text result) {
@@ -844,6 +857,7 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
 
     if (countdown) {
         mLastCountdownAt = now;
+        mSawCountdown = true;
         mGreenTaps = 0;
         mCloseSteps = 0;
         if (sec >= 2 && sec <= 120) {
@@ -855,7 +869,8 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         if (!quiet) {
             mOcrLogAt = now;
             long left = (mAdEndAt - now) / 1000L;
-            log("读到倒计时 " + sec + " 秒（还有约 " + left + " 秒可领取），不点屏幕");
+            log("读到倒计时 " + sec + " 秒"
+                    + (left > 0 ? "（还有约 " + left + " 秒可领取）" : "") + "，不点屏幕");
         }
         return;
     }
@@ -924,6 +939,35 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
             log("还没到读到的结束时间，还剩约 " + left + " 秒，继续等（" + brief(s) + "）");
         }
         return;
+    }
+
+    if (!mSawCountdown) {
+        if (mBlindStep >= 8) {
+            log("一直认不出读秒，也不见领取按钮，放弃这条广告，回歌曲页");
+            mCloseSteps = 0;
+            closeLadder();
+            return;
+        }
+        if (el >= 40000L && now - mLastBlindAt >= 8000L) {
+            mLastBlindAt = now;
+            int step = mBlindStep % 4;
+            mBlindStep += 1;
+            boolean ok;
+            if (step == 0) {
+                ok = tapRatio(0.68f, 0.0703f);
+                log("认不出读秒，盲点页头「领取成功」位置 第" + mBlindStep + "次 手势=" + ok);
+            } else if (step == 1) {
+                ok = tapRatio(0.498f, 0.534f);
+                log("认不出读秒，盲点绿色「领取奖励」位置 第" + mBlindStep + "次 手势=" + ok);
+            } else if (step == 2) {
+                ok = tapRatio(DIALOG_EXIT_X, DIALOG_EXIT_Y);
+                log("认不出读秒，盲点「坚持退出」位置 第" + mBlindStep + "次 手势=" + ok);
+            } else {
+                ok = tapRatio(CLOSE_X, CLOSE_Y);
+                log("认不出读秒，盲点右上角叉 第" + mBlindStep + "次 手势=" + ok);
+            }
+            return;
+        }
     }
 
     if (el < AD_MIN_WATCH_MS + 100000L) {
