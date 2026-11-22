@@ -553,7 +553,7 @@ public class AdWatchService extends AccessibilityService {
     }
 
     private void runCloseAd(AccessibilityNodeInfo root) {
-    if (!isAdPage(root) && !dialogVisible(root)) {
+    if (isSongPage(root) || (!isAdPage(root) && !dialogVisible(root))) {
         if (elapsedInState() < 1200L) {
             scheduleNext(300L);
             return;
@@ -763,7 +763,7 @@ private boolean looksLikeLanding(String s) {
             || s.contains("主线") || s.contains("行情") || s.contains("股市");
 }
 
-// v48：彻底不点右下角，落地页只退出（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v49：识破假广告页（其实是歌曲页）（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -1274,7 +1274,7 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
         }
     }
 
-    if (el < AD_MIN_WATCH_MS + 100000L) {
+    if (el < AD_MIN_WATCH_MS + 40000L) {
         if (!quiet) {
             mOcrLogAt = now;
             log("只看不点，等广告播完（" + brief(s) + "）");
@@ -1573,6 +1573,11 @@ private void forceResetTarget() {
             return true;
         }
         return tapRatio(CLAIM_X, CLAIM_Y);
+    }
+
+    private boolean isSongPage(AccessibilityNodeInfo root) {
+        return hasAnyText(root, new String[]{"作词", "作曲", "听抖音"}, 0)
+                && !hasAnyText(root, new String[]{"领取成功", "后可领取"}, 0);
     }
 
     private boolean isAdPage(AccessibilityNodeInfo root) {
