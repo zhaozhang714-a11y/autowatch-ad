@@ -158,6 +158,7 @@ public class AdWatchService extends AccessibilityService {
             mSawCountdown = false;
             mBlindStep = 0;
             mLastBlindAt = 0L;
+            mNoHeaderSign = 0;
         }
     }
 
@@ -353,6 +354,61 @@ public class AdWatchService extends AccessibilityService {
         scheduleNext(Config.POLL_INTERVAL_MS);
     }
 
+    private AccessibilityNodeInfo findNodeDescOrText(AccessibilityNodeInfo n, String key, int depth) {
+        if (n == null || depth <= 0) {
+            return null;
+        }
+        CharSequence d = n.getContentDescription();
+        if (d != null && d.toString().contains(key)) {
+            return n;
+        }
+        CharSequence t = n.getText();
+        if (t != null && t.toString().contains(key)) {
+            return n;
+        }
+        int c = n.getChildCount();
+        for (int i = 0; i < c; i++) {
+            AccessibilityNodeInfo r = findNodeDescOrText(n.getChild(i), key, depth - 1);
+            if (r != null) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private String claimNodeDesc(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo node = findNodeDescOrText(root, "领取成功", 30);
+        if (node == null) {
+            return null;
+        }
+        CharSequence d = node.getContentDescription();
+        String s = d == null ? "" : d.toString();
+        if (s.length() == 0) {
+            CharSequence t = node.getText();
+            s = t == null ? "" : t.toString();
+        }
+        if (s.contains("秒") || s.contains("后")) {
+            return null;
+        }
+        return s;
+    }
+
+    private boolean clickClaimNode(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo node = findNodeDescOrText(root, "领取成功", 30);
+        if (node == null) {
+            return false;
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true;
+        }
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+        if (rect.width() <= 0 || rect.height() <= 0) {
+            return false;
+        }
+        return tapPoint(rect.left + (int) (rect.width() * 0.45f), rect.centerY());
+    }
+
     private AccessibilityNodeInfo findEntryNode(AccessibilityNodeInfo root) {
         int w = getResources().getDisplayMetrics().widthPixels;
         int h = getResources().getDisplayMetrics().heightPixels;
@@ -492,7 +548,19 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v44：弹窗优先，页头让位）");
+        log("广告页已出现，开始认字（v45：先看节点树有没有领取成功按钮）");
+    }
+    long nowNode = System.currentTimeMillis();
+    if (nowNode - mHeadClaimAt >= 5000L && nowNode - mLastCountdownAt > 4000L) {
+        String desc = claimNodeDesc(root);
+        if (desc != null) {
+            boolean ok = clickClaimNode(root);
+            mHeadClaimAt = nowNode;
+            mAdEndAt = 0L;
+            log("节点树里找到「" + desc + "」按钮，直接点它领取 手势=" + ok);
+            scheduleNext(900L);
+            return;
+        }
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -640,8 +708,9 @@ private android.graphics.Bitmap mPendingFull = null;
 private long mHeaderLogAt = 0L;
 private int mHeaderHit = 0;
 private long mDialogSeenAt = 0L;
+private int mNoHeaderSign = 0;
 
-// v44：弹窗优先，页头让位（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+// v45：节点树点「领取成功」（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
 private void actByHeader(com.google.mlkit.vision.text.Text result) {
     String s = result.getText();
     if (s == null) {
@@ -663,15 +732,27 @@ private void actByHeader(com.google.mlkit.vision.text.Text result) {
         }
         if (now - mHeadClaimAt >= 7000L) {
             mHeadClaimAt = now;
-            boolean ok = tapRatio(0.88f, 0.078f);
-            log("页头读到「领取成功」，立刻点它领取 手势=" + ok);
+            boolean ok = false;
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                ok = clickClaimNode(root);
+            } catch (Throwable t) {
+                ok = false;
+            }
+            if (!ok) {
+                ok = tapRatio(0.88f, 0.078f);
+                log("页头读到「领取成功」，按坐标点它领取 手势=" + ok);
+            } else {
+                log("页头读到「领取成功」，点节点按钮领取 成功");
+            }
         }
         return;
     }
     int sec = parseSeconds(s);
-    if (sec >= 2 && sec <= 120
+    if (sec >= 2 && sec <= 75
             && (s.contains("领取") || s.contains("顿取") || s.contains("后可领"))) {
         mSawCountdown = true;
+        mNoHeaderSign = 0;
         mLastCountdownAt = now;
         long end = now + (long) sec * 1000L;
         if (end > mAdEndAt) {
@@ -680,6 +761,22 @@ private void actByHeader(com.google.mlkit.vision.text.Text result) {
         if (now - mHeaderLogAt >= 5000L) {
             mHeaderLogAt = now;
             log("页头读到倒计时 " + sec + " 秒，等它归零再点");
+        }
+        return;
+    }
+    mNoHeaderSign += 1;
+    if (mNoHeaderSign >= 3) {
+        mNoHeaderSign = 0;
+        if (mAdEndAt > 0L) {
+            mAdEndAt = 0L;
+            log("页头连着几次既没读秒也没领取成功，清掉旧的计时");
+        }
+        if (now - mDialogSeenAt < 6000L) {
+            return;
+        }
+        if (elapsedInState() >= 15000L) {
+            boolean ok = tapRatio(0.053f, 0.074f);
+            log("页头什么也读不到，当商品落地页处理，点左上角返回箭头 手势=" + ok);
         }
     }
 }
