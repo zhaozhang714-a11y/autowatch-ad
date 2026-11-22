@@ -492,7 +492,7 @@ public class AdWatchService extends AccessibilityService {
     }
     if (mShotIdleLog == 0) {
         mShotIdleLog = 1;
-        log("广告页已出现，开始认字（v42：认不出去就按实测坐标点）");
+        log("广告页已出现，开始认字（v43：只认页头那一条）");
     }
     if (Build.VERSION.SDK_INT >= 30 && !mOcrFailed) {
         if (!mShotPending && System.currentTimeMillis() - mLastShotAt >= 1700L) {
@@ -560,7 +560,37 @@ private void lookAtScreen() {
                     if (hb != null) {
                         android.graphics.Bitmap soft = hb.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
                         if (soft != null) {
-                            runOcr(soft, mShotMode);
+                            if (mShotMode == 0) {
+                                mTick += 1;
+                                if (mPendingFull != null) {
+                                    safeRecycle(mPendingFull);
+                                    mPendingFull = null;
+                                }
+                                if (mTick % 3 == 0) {
+                                    mPendingFull = soft;
+                                }
+                                android.graphics.Bitmap head = null;
+                                try {
+                                    int hh = (int) (soft.getHeight() * 0.13f);
+                                    if (hh < 40) {
+                                        hh = Math.min(soft.getHeight(), 200);
+                                    }
+                                    head = android.graphics.Bitmap.createBitmap(soft, 0, 0, soft.getWidth(), hh);
+                                } catch (Throwable t) {
+                                    head = null;
+                                }
+                                if (head != null) {
+                                    runOcr(head, 3);
+                                } else if (mPendingFull != null) {
+                                    android.graphics.Bitmap b = mPendingFull;
+                                    mPendingFull = null;
+                                    runOcr(b, 0);
+                                } else {
+                                    safeRecycle(soft);
+                                }
+                            } else {
+                                runOcr(soft, mShotMode);
+                            }
                         }
                     }
                 } catch (Throwable t) {
@@ -607,6 +637,46 @@ private long mPillAt = 0L;
 private int mPillCx = 0;
 private int mPillCy = 0;
 private boolean mPillFound = false;
+private int mTick = 0;
+private android.graphics.Bitmap mPendingFull = null;
+private long mHeaderLogAt = 0L;
+private int mHeaderHit = 0;
+
+// v43：只认页头那一条（广告 | 反馈 | 领取成功 ✕），不受广告画面文字干扰
+private void actByHeader(com.google.mlkit.vision.text.Text result) {
+    String s = result.getText();
+    if (s == null) {
+        return;
+    }
+    s = s.replace(" ", "").replace("\n", "");
+    long now = System.currentTimeMillis();
+    if (mGesturePending || now - mLastGestureAt < GESTURE_GAP_MS) {
+        return;
+    }
+    if (s.contains("领取成功")) {
+        mHeaderHit += 1;
+        if (now - mHeadClaimAt >= 7000L) {
+            mHeadClaimAt = now;
+            boolean ok = tapRatio(0.88f, 0.078f);
+            log("页头读到「领取成功」，立刻点它领取 手势=" + ok);
+        }
+        return;
+    }
+    int sec = parseSeconds(s);
+    if (sec >= 2 && sec <= 120
+            && (s.contains("领取") || s.contains("顿取") || s.contains("后可领"))) {
+        mSawCountdown = true;
+        mLastCountdownAt = now;
+        long end = now + (long) sec * 1000L;
+        if (end > mAdEndAt) {
+            mAdEndAt = end;
+        }
+        if (now - mHeaderLogAt >= 5000L) {
+            mHeaderLogAt = now;
+            log("页头读到倒计时 " + sec + " 秒，等它归零再点");
+        }
+    }
+}
 
 private com.google.mlkit.vision.text.TextRecognizer ocr() {
     if (mOcr == null) {
@@ -644,6 +714,13 @@ private void runOcr(android.graphics.Bitmap bmp, final int mode) {
                 safeRecycle(bmp);
                 if (mode == 1) {
                     actByEntry(result);
+                } else if (mode == 3) {
+                    actByHeader(result);
+                    android.graphics.Bitmap full = mPendingFull;
+                    mPendingFull = null;
+                    if (full != null) {
+                        runOcr(full, 0);
+                    }
                 } else {
                     actByText(result);
                 }
@@ -954,7 +1031,7 @@ private void actByText(com.google.mlkit.vision.text.Text result) {
             mBlindStep += 1;
             boolean ok;
             if (step == 0) {
-                ok = tapRatio(0.68f, 0.0703f);
+                ok = tapRatio(0.88f, 0.078f);
                 log("认不出读秒，盲点页头「领取成功」位置 第" + mBlindStep + "次 手势=" + ok);
             } else if (step == 1) {
                 ok = tapRatio(0.498f, 0.534f);
